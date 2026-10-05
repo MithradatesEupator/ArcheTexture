@@ -7,47 +7,57 @@ from archetexture.core.operations import (
     Seamlessness,
 )
 from archetexture.core.parameters import ParameterSpec, ParameterType
+from archetexture.generators import basic as generators
+from archetexture.transforms import basic as transforms
 
 REGISTRY = OperationDefinitionSet()
 
 
-def register_builtin_operations() -> None:
-    if REGISTRY.definitions:
-        return
+def _spec(
+    identifier: str,
+    name: str,
+    kind: ParameterType,
+    default,
+    minimum: float,
+    maximum: float,
+    step: float,
+) -> ParameterSpec:
+    return ParameterSpec(
+        identifier,
+        name,
+        kind,
+        default=default,
+        min_value=minimum,
+        max_value=maximum,
+        step=step,
+    )
 
-    defs: list[OperationDefinition] = [
+
+def builtin_definitions() -> tuple[OperationDefinition, ...]:
+    return (
         OperationDefinition(
-            identifier="generator.constant",
-            version=1,
-            name="Constant",
-            category="Generator",
-            description="Produces a constant scalar field.",
-            operation_type=OperationType.GENERATOR,
-            input_types=(),
-            output_type="scalar",
-            parameter_specs=(
-                ParameterSpec(
-                    "value",
-                    "Value",
-                    ParameterType.FLOAT,
-                    default=0.5,
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                ),
-            ),
-            seamlessness=Seamlessness.INHERENT,
+            "generator.constant",
+            1,
+            "Constant",
+            "Generator",
+            "Produces a constant scalar field.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
+            (_spec("value", "Value", ParameterType.FLOAT, 0.5, 0.0, 1.0, 0.01),),
+            Seamlessness.INHERENT,
+            generators.constant,
         ),
         OperationDefinition(
-            identifier="generator.white_noise",
-            version=1,
-            name="White Noise",
-            category="Generator",
-            description="Generates random scalar noise.",
-            operation_type=OperationType.GENERATOR,
-            input_types=(),
-            output_type="scalar",
-            parameter_specs=(
+            "generator.white_noise",
+            1,
+            "White Noise",
+            "Generator",
+            "Deterministic uniform scalar noise.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
+            (
                 ParameterSpec(
                     "seed",
                     "Seed",
@@ -56,113 +66,84 @@ def register_builtin_operations() -> None:
                     min_value=0,
                     max_value=2**31 - 1,
                     step=1,
+                    allows_modulation=False,
                 ),
             ),
-            seamlessness=Seamlessness.UNKNOWN,
+            Seamlessness.UNKNOWN,
+            generators.white_noise,
         ),
         OperationDefinition(
-            identifier="generator.linear_gradient",
-            version=1,
-            name="Linear Gradient",
-            category="Generator",
-            description="Generates a linear gradient field.",
-            operation_type=OperationType.GENERATOR,
-            input_types=(),
-            output_type="scalar",
-            parameter_specs=(
-                ParameterSpec(
-                    "angle",
-                    "Angle",
-                    ParameterType.ANGLE,
-                    default=0.0,
-                    min_value=0.0,
-                    max_value=360.0,
-                    step=1.0,
-                ),
-            ),
-            seamlessness=Seamlessness.UNKNOWN,
+            "generator.linear_gradient",
+            1,
+            "Linear Gradient",
+            "Generator",
+            "Projects a normalized gradient along the selected angle.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
+            (_spec("angle", "Angle", ParameterType.ANGLE, 0.0, 0.0, 360.0, 1.0),),
+            Seamlessness.UNKNOWN,
+            generators.linear_gradient,
         ),
         OperationDefinition(
-            identifier="generator.radial_gradient",
-            version=1,
-            name="Radial Gradient",
-            category="Generator",
-            description="Generates a radial gradient field.",
-            operation_type=OperationType.GENERATOR,
-            input_types=(),
-            output_type="scalar",
-            parameter_specs=(
-                ParameterSpec(
-                    "radius",
-                    "Radius",
-                    ParameterType.FLOAT,
-                    default=0.5,
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                ),
-            ),
-            seamlessness=Seamlessness.UNKNOWN,
+            "generator.radial_gradient",
+            1,
+            "Radial Gradient",
+            "Generator",
+            "Produces a centered falloff whose radius is measured against the image width.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
+            (_spec("radius", "Radius", ParameterType.FLOAT, 0.5, 0.01, 1.0, 0.01),),
+            Seamlessness.UNKNOWN,
+            generators.radial_gradient,
         ),
         OperationDefinition(
-            identifier="transform.invert",
-            version=1,
-            name="Invert",
-            category="Transform",
-            description="Inverts scalar values.",
-            operation_type=OperationType.TRANSFORM,
-            input_types=("scalar",),
-            output_type="scalar",
-            parameter_specs=(),
-            seamlessness=Seamlessness.PRESERVES,
+            "transform.invert",
+            1,
+            "Invert",
+            "Transform",
+            "Inverts scalar values.",
+            OperationType.TRANSFORM,
+            ("scalar",),
+            "scalar",
+            (),
+            Seamlessness.PRESERVES,
+            transforms.invert,
         ),
         OperationDefinition(
-            identifier="transform.threshold",
-            version=1,
-            name="Threshold",
-            category="Transform",
-            description="Thresholds values.",
-            operation_type=OperationType.TRANSFORM,
-            input_types=("scalar",),
-            output_type="scalar",
-            parameter_specs=(
-                ParameterSpec(
-                    "threshold",
-                    "Threshold",
-                    ParameterType.FLOAT,
-                    default=0.5,
-                    min_value=0.0,
-                    max_value=1.0,
-                    step=0.01,
-                ),
-            ),
-            seamlessness=Seamlessness.PRESERVES,
+            "transform.threshold",
+            1,
+            "Threshold",
+            "Transform",
+            "Maps values at or above the threshold to one.",
+            OperationType.TRANSFORM,
+            ("scalar",),
+            "scalar",
+            (_spec("threshold", "Threshold", ParameterType.FLOAT, 0.5, 0.0, 1.0, 0.01),),
+            Seamlessness.PRESERVES,
+            transforms.threshold,
         ),
         OperationDefinition(
-            identifier="transform.quantize",
-            version=1,
-            name="Quantize",
-            category="Transform",
-            description="Quantizes to bands.",
-            operation_type=OperationType.TRANSFORM,
-            input_types=("scalar",),
-            output_type="scalar",
-            parameter_specs=(
-                ParameterSpec(
-                    "levels",
-                    "Levels",
-                    ParameterType.INTEGER,
-                    default=8,
-                    min_value=2,
-                    max_value=256,
-                    step=1,
-                ),
-            ),
-            seamlessness=Seamlessness.PRESERVES,
+            "transform.quantize",
+            1,
+            "Quantize",
+            "Transform",
+            "Quantizes normalized values to the selected number of levels.",
+            OperationType.TRANSFORM,
+            ("scalar",),
+            "scalar",
+            (_spec("levels", "Levels", ParameterType.INTEGER, 8, 2, 256, 1),),
+            Seamlessness.PRESERVES,
+            transforms.quantize,
         ),
-    ]
-    for definition in defs:
-        REGISTRY.register(definition)
+    )
+
+
+def register_builtin_operations(target: OperationDefinitionSet = REGISTRY) -> None:
+    for definition in builtin_definitions():
+        if definition.identifier not in target.definitions:
+            target.register(definition)
 
 
 register_builtin_operations()

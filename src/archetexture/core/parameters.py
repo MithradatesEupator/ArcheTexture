@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
@@ -31,9 +31,10 @@ class ParameterSpec:
     allows_modulation: bool = True
     units: str | None = None
     options: tuple[str, ...] = ()
+    required: bool = False
 
 
-@dataclass
+@dataclass(frozen=True)
 class ControlFieldMapping:
     output_min: float = 0.0
     output_max: float = 1.0
@@ -42,13 +43,15 @@ class ControlFieldMapping:
     quantize: float | None = None
 
     def normalized_range(self) -> tuple[float, float]:
-        return (float(self.output_min), float(self.output_max))
+        return float(self.output_min), float(self.output_max)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ControlFieldBinding:
     source_id: str
-    mapping: ControlFieldMapping = field(default_factory=ControlFieldMapping)
+    mapping: ControlFieldMapping = ControlFieldMapping()
 
 
-ParameterValue = float | int | bool | str | tuple[float, float] | ControlFieldBinding
+ParameterValue = (
+    float | int | bool | str | tuple[float, ...] | list[Any] | dict[str, Any] | ControlFieldBinding
+)

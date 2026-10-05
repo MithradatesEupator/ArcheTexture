@@ -1,73 +1,181 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from typing import Any
+
 import numpy as np
 
 from archetexture.core.control_fields import ControlFieldEvaluator
-from archetexture.core.fields import ScalarField, as_scalar_field, ensure_normalized_scalar
-from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.fields import (
+    RGBAField,
+    ScalarField,
+    ensure_normalized_scalar,
+    validate_rgba_field,
+    validate_scalar_field,
+)
+from archetexture.core.operations import OperationDefinitionSet, OperationType
+from archetexture.core.parameters import (
+    ControlFieldBinding,
+    ParameterSpec,
+    ParameterType,
+)
+from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.core.validation import ensure_valid_recipe
+
+Field = ScalarField | RGBAField
 
 
-def _resolve_parameter(value: object, *, width: int, height: int, seed: int) -> object:
+@dataclass
+class _Evaluation:
+    recipe: ProjectRecipe
+    width: int
+    height: int
+    registry: OperationDefinitionSet
+    control_cache: dict[str, ScalarField] = field(default_factory=dict)
+    control_stack: set[str] = field(default_factory=set)
+
+    def resolve_binding(self, binding: ControlFieldBinding) -> ScalarField:
+        try:
+            raw = self.control_field(binding.source_id)
+        except KeyError as exc:
+            raise ValueError(f"Unknown control field: {binding.source_id}") from exc
+        return ControlFieldEvaluator.evaluate(binding, raw, width=self.width, height=self.height)
+
+    def control_field(self, identifier: str) -> ScalarField:
+        if identifier in self.control_cache:
+            return self.control_cache[identifier]
+        if identifier in self.control_stack:
+            raise ValueError(f"Cyclic control-field reference: {identifier}")
+        control = self.recipe.control_fields.get(identifier)
+        if control is None:
+            raise KeyError(identifier)
+        self.control_stack.add(identifier)
+        try:
+            raw = _evaluate_pipeline(
+                control.source,
+                control.transforms,
+                self,
+                self.recipe.seed,
+            )
+            scalar = validate_scalar_field(raw, name=f"control field {identifier}")
+            if control.mapping is not None:
+                scalar = ControlFieldEvaluator.map_field(control.mapping, scalar)
+            self.control_cache[identifier] = ensure_normalized_scalar(scalar)
+            return self.control_cache[identifier]
+        finally:
+            self.control_stack.remove(identifier)
+
+
+def _coerce_parameter(
+    value: Any,
+    spec: ParameterSpec,
+    evaluation: _Evaluation,
+) -> Any:
+    is_modulated = isinstance(value, ControlFieldBinding)
+    if is_modulated:
+        value = evaluation.resolve_binding(value)
+    if spec.type in {
+        ParameterType.FLOAT,
+        ParameterType.INTEGER,
+        ParameterType.SEED,
+        ParameterType.ANGLE,
+        ParameterType.PERCENT,
+    }:
+        if is_modulated:
+            array = np.asarray(value, dtype=np.float32)
+            if spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
+                array = np.rint(array)
+            if spec.min_value is not None:
+                array = np.maximum(array, spec.min_value)
+            if spec.max_value is not None:
+                array = np.minimum(array, spec.max_value)
+            return array.astype(np.float32, copy=False)
+        if spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
+            return int(value)
+        return float(value)
+    if spec.type == ParameterType.BOOLEAN:
+        return bool(value)
+    if spec.type in {ParameterType.COLOR, ParameterType.POSITION_2D}:
+        return tuple(value)
     return value
 
 
-def _evaluate_instance(
+def _run_instance(
     instance: OperationInstance,
-    *,
-    width: int,
-    height: int,
+    input_field: Field | None,
+    evaluation: _Evaluation,
     seed: int,
-) -> ScalarField:
-    definition = REGISTRY.get(instance.operation_id)
-    params = instance.parameters
-    if definition.identifier == "generator.constant":
-        value = float(params.get("value", definition.parameter_specs[0].default))
-        return np.full((height, width), value, dtype=np.float32)
-    if definition.identifier == "generator.white_noise":
-        noise_seed = int(params.get("seed", 0)) if params.get("seed") is not None else 0
-        rng = np.random.default_rng(seed + noise_seed)
-        return rng.random((height, width), dtype=np.float32)
-    if definition.identifier == "generator.linear_gradient":
-        angle = float(params.get("angle", 0.0))
-        y, x = np.mgrid[0:height, 0:width]
-        nx = x / max(width - 1, 1)
-        ny = y / max(height - 1, 1)
-        theta = np.deg2rad(angle)
-        v = nx * np.cos(theta) + ny * np.sin(theta)
-        return ensure_normalized_scalar((v - v.min()) / max(v.max() - v.min(), 1e-6))
-    if definition.identifier == "generator.radial_gradient":
-        y, x = np.mgrid[0:height, 0:width]
-        cx = 0.5
-        cy = 0.5
-        dist = np.sqrt((x / max(width - 1, 1) - cx) ** 2 + (y / max(height - 1, 1) - cy) ** 2)
-        dist = 1.0 - np.clip(dist, 0.0, 1.0)
-        return ensure_normalized_scalar(dist)
-    if definition.identifier == "transform.invert":
-        source = params.get("_input", np.zeros((height, width), dtype=np.float32))
-        return 1.0 - as_scalar_field(source)
-    if definition.identifier == "transform.threshold":
-        threshold = float(params.get("threshold", 0.5))
-        source = params.get("_input", np.zeros((height, width), dtype=np.float32))
-        src = as_scalar_field(source)
-        return (src >= threshold).astype(np.float32)
-    if definition.identifier == "transform.quantize":
-        levels = max(2, int(params.get("levels", 8)))
-        source = params.get("_input", np.zeros((height, width), dtype=np.float32))
-        src = as_scalar_field(source)
-        return np.round(src * levels) / levels
-    raise NotImplementedError(
-        f"Operation {definition.identifier} not implemented in pipeline evaluator"
+) -> Field:
+    definition = evaluation.registry.get(instance.operation_id)
+    if input_field is not None:
+        if definition.input_types and "any" not in definition.input_types:
+            input_type = "scalar" if input_field.ndim == 2 else "rgba"
+            if input_type not in definition.input_types:
+                raise ValueError(f"{definition.identifier} cannot accept {input_type} input")
+    implementation = definition.implementation
+    if implementation is None:
+        raise RuntimeError(f"Operation has no implementation: {definition.identifier}")
+    raw_parameters = instance.parameters
+    parameters = {
+        spec.identifier: _coerce_parameter(
+            raw_parameters.get(spec.identifier, spec.default), spec, evaluation
+        )
+        for spec in definition.parameter_specs
+    }
+    result = np.asarray(
+        implementation(input_field, parameters, evaluation.width, evaluation.height, seed),
+        dtype=np.float32,
     )
+    if definition.output_type == "scalar":
+        return ensure_normalized_scalar(validate_scalar_field(result, name=definition.identifier))
+    if definition.output_type == "rgba":
+        return np.clip(validate_rgba_field(result, name=definition.identifier), 0.0, 1.0).astype(
+            np.float32, copy=False
+        )
+    raise ValueError(f"Unsupported output field type: {definition.output_type}")
 
 
-def evaluate_control_field(control: ControlFieldRecipe, *, width: int, height: int) -> ScalarField:
-    field = _evaluate_instance(control.source, width=width, height=height, seed=0)
-    for item in control.transforms:
-        field = _evaluate_instance(item, width=width, height=height, seed=0)
-    if control.mapping is not None:
-        return ControlFieldEvaluator.evaluate(control.mapping, field, width=width, height=height)
-    return ensure_normalized_scalar(field)
+def _blend(previous: Field, transformed: Field, influence: float | np.ndarray) -> Field:
+    if previous.shape != transformed.shape:
+        raise ValueError("Transform output shape does not match its input")
+    alpha = np.asarray(influence, dtype=np.float32)
+    if previous.ndim == 3 and alpha.ndim == 2:
+        alpha = alpha[..., None]
+    result = previous * (1.0 - alpha) + transformed * alpha
+    if result.ndim == 2:
+        return ensure_normalized_scalar(result)
+    return np.clip(validate_rgba_field(result), 0.0, 1.0).astype(np.float32, copy=False)
+
+
+def _evaluate_pipeline(
+    source: OperationInstance,
+    transforms: list[OperationInstance],
+    evaluation: _Evaluation,
+    seed: int,
+) -> Field:
+    field_value = _run_instance(source, None, evaluation, seed)
+    for instance in transforms:
+        if not instance.enabled:
+            continue
+        definition = evaluation.registry.get(instance.operation_id)
+        if definition.operation_type != OperationType.TRANSFORM:
+            raise ValueError(f"Pipeline stage is not a transform: {instance.operation_id}")
+        transformed = _run_instance(instance, field_value, evaluation, seed)
+        if isinstance(instance.influence, ControlFieldBinding):
+            influence_spec = ParameterSpec(
+                "influence",
+                "Influence",
+                ParameterType.PERCENT,
+                default=1.0,
+                min_value=0.0,
+                max_value=1.0,
+            )
+            influence = _coerce_parameter(instance.influence, influence_spec, evaluation)
+        else:
+            influence = float(instance.influence)
+        field_value = _blend(field_value, transformed, influence)
+    return field_value
 
 
 def evaluate_recipe(
@@ -75,29 +183,13 @@ def evaluate_recipe(
     *,
     width: int | None = None,
     height: int | None = None,
-) -> ScalarField:
-    w = int(width or recipe.width)
-    h = int(height or recipe.height)
-    if recipe.source is None:
-        return np.zeros((h, w), dtype=np.float32)
-    field = _evaluate_instance(recipe.source, width=w, height=h, seed=recipe.seed)
-    for transform in recipe.transforms:
-        param_values = dict(transform.parameters)
-        if transform.enabled is False:
-            continue
-        param_values["_input"] = field
-        transform = OperationInstance(
-            instance_id=transform.instance_id,
-            operation_id=transform.operation_id,
-            operation_version=transform.operation_version,
-            enabled=transform.enabled,
-            parameters=param_values,
-            influence=transform.influence,
-        )
-        transformed = _evaluate_instance(transform, width=w, height=h, seed=recipe.seed)
-        influence = transform.influence
-        if isinstance(influence, (int, float)):
-            field = (1.0 - float(influence)) * field + float(influence) * transformed
-        else:
-            field = field  # control field modulation is evaluated in a future-compatible path
-    return ensure_normalized_scalar(field)
+    registry: OperationDefinitionSet = REGISTRY,
+) -> Field:
+    ensure_valid_recipe(recipe, registry)
+    output_width = recipe.width if width is None else width
+    output_height = recipe.height if height is None else height
+    for name, dimension in (("width", output_width), ("height", output_height)):
+        if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
+            raise ValueError(f"Render {name} must be a positive integer")
+    evaluation = _Evaluation(recipe, output_width, output_height, registry)
+    return _evaluate_pipeline(recipe.source, recipe.transforms, evaluation, recipe.seed)

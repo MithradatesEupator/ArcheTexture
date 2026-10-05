@@ -1,38 +1,97 @@
 from __future__ import annotations
 
+import copy
+from collections.abc import Callable
+from pathlib import Path
+
+from archetexture.core.defaults import default_recipe
 from archetexture.core.history import HistoryManager
 from archetexture.core.recipe import ProjectRecipe
-from archetexture.core.validation import ValidationError
+from archetexture.core.serialization import load_project, save_project
+from archetexture.core.validation import ensure_valid_recipe
 
 
 class DocumentController:
-    def __init__(self, recipe: ProjectRecipe | None = None):
-        self.recipe = recipe or ProjectRecipe()
-        self.project_path: str | None = None
-        self.dirty = False
-        self.history = HistoryManager()
-        self.history.push(self.recipe)
+    """Owns the canonical recipe, its history, file path, and save point."""
 
-    def replace_recipe(self, new_recipe: ProjectRecipe) -> ProjectRecipe:
-        if not isinstance(new_recipe, ProjectRecipe):
-            raise ValidationError([])
-        self.recipe = new_recipe
-        self.dirty = True
-        self.history.push(new_recipe)
-        return new_recipe
+    def __init__(self, recipe: ProjectRecipe | None = None):
+        initial = copy.deepcopy(recipe) if recipe is not None else default_recipe()
+        ensure_valid_recipe(initial)
+        self._recipe = initial
+        self.project_path: str | None = None
+        self.history = HistoryManager()
+        self.history.reset(initial)
+        self._saved_recipe = copy.deepcopy(initial)
+
+    @property
+    def recipe(self) -> ProjectRecipe:
+        return copy.deepcopy(self._recipe)
+
+    @property
+    def dirty(self) -> bool:
+        return self._recipe != self._saved_recipe
+
+    @property
+    def can_undo(self) -> bool:
+        return self.history.can_undo
+
+    @property
+    def can_redo(self) -> bool:
+        return self.history.can_redo
+
+    def commit(self, recipe: ProjectRecipe) -> ProjectRecipe:
+        ensure_valid_recipe(recipe)
+        snapshot = copy.deepcopy(recipe)
+        if snapshot == self._recipe:
+            return self.recipe
+        self.history.push(snapshot)
+        self._recipe = snapshot
+        return self.recipe
+
+    def edit(self, edit: Callable[[ProjectRecipe], None]) -> ProjectRecipe:
+        updated = self.recipe
+        edit(updated)
+        return self.commit(updated)
 
     def undo(self) -> ProjectRecipe:
-        recipe = self.history.undo()
-        if recipe is None:
-            return self.recipe
-        self.recipe = recipe
-        self.dirty = True
-        return recipe
+        previous = self.history.undo()
+        if previous is not None:
+            self._recipe = previous
+        return self.recipe
 
     def redo(self) -> ProjectRecipe:
-        recipe = self.history.redo()
-        if recipe is None:
-            return self.recipe
-        self.recipe = recipe
-        self.dirty = True
-        return recipe
+        following = self.history.redo()
+        if following is not None:
+            self._recipe = following
+        return self.recipe
+
+    def new_document(self, recipe: ProjectRecipe | None = None) -> ProjectRecipe:
+        new_recipe = copy.deepcopy(recipe) if recipe is not None else default_recipe()
+        ensure_valid_recipe(new_recipe)
+        self._recipe = new_recipe
+        self.project_path = None
+        self.history.reset(new_recipe)
+        self._saved_recipe = copy.deepcopy(new_recipe)
+        return self.recipe
+
+    def open_project(self, path: str | Path) -> ProjectRecipe:
+        loaded = load_project(path)
+        ensure_valid_recipe(loaded)
+        self._recipe = copy.deepcopy(loaded)
+        self.project_path = str(Path(path))
+        self.history.reset(loaded)
+        self._saved_recipe = copy.deepcopy(loaded)
+        return self.recipe
+
+    def save(self, path: str | Path | None = None) -> str:
+        destination = (
+            Path(path)
+            if path is not None
+            else (Path(self.project_path) if self.project_path is not None else None)
+        )
+        if destination is None:
+            raise ValueError("Save As requires a project path")
+        save_project(self._recipe, destination)
+        self.project_path = str(destination)
+        self._saved_recipe = copy.deepcopy(self._recipe)
+        return self.project_path
