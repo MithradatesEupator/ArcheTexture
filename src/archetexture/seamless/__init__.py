@@ -1,0 +1,1 @@
+"""Seamlessness metadata and helpers."""
