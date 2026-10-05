@@ -354,13 +354,14 @@ class MainWindow(QMainWindow):
         if not path:
             return False
         path = str(path)
-        if not self._confirm_discard():
-            return False
         try:
-            recipe = self.document.open_project(path)
+            candidate = self.document.prepare_project(path)
         except Exception as exc:
             QMessageBox.critical(self, "Open failed", str(exc))
             return False
+        if not self._confirm_discard():
+            return False
+        recipe = self.document.replace_with_project(candidate)
         self._selected_instance_id = recipe.source.instance_id if recipe.source else None
         self._refresh_document(request_render=True)
         return True

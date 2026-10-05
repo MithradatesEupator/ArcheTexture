@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import sys
@@ -516,6 +517,79 @@ def test_invalid_transform_chain_and_future_schema_are_rejected(tmp_path):
     malformed.write_text("{broken", encoding="utf-8")
     with pytest.raises(ProjectFormatError):
         load_project(malformed)
+
+
+def _write_invalid_project(path, case: str) -> None:
+    valid_path = path.with_name("valid-base.archetexture")
+    save_project(constant_recipe(0.6), valid_path)
+    payload = json.loads(valid_path.read_text(encoding="utf-8"))
+    if case == "unknown-source":
+        payload["source"]["operation_id"] = "definitely.invalid.operation"
+    elif case == "unknown-transform":
+        payload["transforms"] = [
+            {
+                "instance_id": "bad-transform",
+                "operation_id": "definitely.invalid.operation",
+                "operation_version": 1,
+                "enabled": True,
+                "parameters": {},
+                "influence": 1.0,
+            }
+        ]
+    elif case == "unsupported-operation-version":
+        payload["source"]["operation_version"] = 999
+    elif case == "future-schema":
+        payload["schema_version"] = 999
+    elif case == "malformed-recipe":
+        payload["width"] = 0
+    elif case == "malformed-json":
+        path.write_text("{not-json", encoding="utf-8")
+        return
+    else:
+        raise AssertionError(f"Unknown invalid-project case: {case}")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unknown-source",
+        "unknown-transform",
+        "unsupported-operation-version",
+        "future-schema",
+        "malformed-json",
+        "malformed-recipe",
+    ],
+)
+@pytest.mark.parametrize("saved_before_failure", [False, True], ids=["dirty", "saved"])
+def test_failed_open_preserves_document_path_savepoint_recipe_and_history(
+    tmp_path, case, saved_before_failure
+):
+    document = DocumentController(constant_recipe(0.1))
+    previous_path = tmp_path / "current.archetexture"
+    document.save(previous_path)
+    document.edit(lambda recipe: recipe.source.parameters.__setitem__("value", 0.2))
+    document.edit(lambda recipe: recipe.source.parameters.__setitem__("value", 0.3))
+    document.undo()
+    if saved_before_failure:
+        document.save()
+
+    assert document.can_undo and document.can_redo
+    assert document.dirty is (not saved_before_failure)
+    expected_recipe = document.recipe
+    expected_history = copy.deepcopy(document.history)
+    expected_path = document.project_path
+    invalid_path = tmp_path / f"{case}.archetexture"
+    _write_invalid_project(invalid_path, case)
+
+    with pytest.raises((ProjectFormatError, ValidationError, UnsupportedSchemaVersion)):
+        document.open_project(invalid_path)
+
+    assert document.recipe == expected_recipe
+    assert document.project_path == expected_path
+    assert document.dirty is (not saved_before_failure)
+    assert document.history == expected_history
+    assert document.can_undo and document.can_redo
 
 
 def test_history_push_copies_mutable_recipes():

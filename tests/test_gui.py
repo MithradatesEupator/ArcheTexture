@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import json
+
 import numpy as np
 import pytest
 from PySide6.QtCore import Qt
@@ -316,6 +319,80 @@ def test_save_load_render_equivalence_and_dirty_document_protection(
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
     )
     assert workbench.close()
+
+
+def test_failed_open_preserves_dirty_work_and_successful_open_still_works(
+    workbench, qtbot, monkeypatch, tmp_path
+):
+    valid_path = tmp_path / "valid.archetexture"
+    assert workbench.save_project(str(valid_path))
+    saved_pixels = workbench.viewport.rendered_field.copy()
+
+    value = workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value")
+    value.setValue(0.4)
+    workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value").setValue(0.5)
+    workbench.undo()
+    qtbot.waitUntil(
+        lambda: workbench.statusBar().currentMessage() != "Rendering…",
+        timeout=5000,
+    )
+    assert workbench.document.dirty
+    assert workbench.document.can_undo and workbench.document.can_redo
+
+    invalid_payload = json.loads(valid_path.read_text(encoding="utf-8"))
+    invalid_payload["source"]["operation_id"] = "definitely.invalid.operation"
+    invalid_path = tmp_path / "invalid-operation.archetexture"
+    invalid_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+
+    expected_recipe = workbench.document.recipe
+    expected_history = copy.deepcopy(workbench.document.history)
+    expected_path = workbench.document.project_path
+    expected_selection = workbench._selected_instance_id
+    expected_pixels = workbench.viewport.rendered_field.copy()
+    expected_title = workbench.windowTitle()
+    errors = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Invalid Open must be rejected before prompting to save or discard"
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda _parent, title, message: errors.append((title, message)),
+    )
+
+    assert not workbench.open_project(str(invalid_path))
+    assert len(errors) == 1
+    assert errors[0][0] == "Open failed"
+    assert "unknown operation" in errors[0][1]
+    assert "Traceback" not in errors[0][1]
+    assert workbench.document.recipe == expected_recipe
+    assert workbench.document.dirty
+    assert workbench.document.project_path == expected_path
+    assert workbench.document.history == expected_history
+    assert workbench.document.can_undo and workbench.document.can_redo
+    assert workbench._selected_instance_id == expected_selection
+    assert workbench.windowTitle() == expected_title
+    assert np.array_equal(workbench.viewport.rendered_field, expected_pixels)
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
+    )
+    assert workbench.open_project(str(valid_path))
+    assert workbench.document.recipe == small_recipe()
+    assert not workbench.document.dirty
+    assert workbench.document.project_path == str(valid_path)
+    assert not workbench.document.can_undo and not workbench.document.can_redo
+    qtbot.waitUntil(
+        lambda: workbench.statusBar().currentMessage() != "Rendering…",
+        timeout=5000,
+    )
+    assert np.array_equal(workbench.viewport.rendered_field, saved_pixels)
 
 
 def test_save_as_adds_project_extension(workbench, tmp_path):
