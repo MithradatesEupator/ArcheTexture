@@ -4,32 +4,48 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from archetexture.core.fields import RGBAField, ScalarField, validate_scalar_field
 
-@dataclass
+
+@dataclass(frozen=True)
 class ColorStop:
     position: float
     color: tuple[float, float, float, float]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "color", tuple(self.color))
 
-@dataclass
+
+@dataclass(frozen=True)
 class ColorRamp:
-    stops: list[ColorStop]
+    stops: tuple[ColorStop, ...] | list[ColorStop]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stops", tuple(self.stops))
 
     def sample(self, value: float) -> tuple[float, float, float, float]:
-        if not self.stops:
-            return (0.0, 0.0, 0.0, 1.0)
-        if len(self.stops) == 1:
-            return self.stops[0].color
-        arr = np.asarray([stop.position for stop in self.stops], dtype=np.float32)
-        colors = np.asarray([stop.color for stop in self.stops], dtype=np.float32)
-        v = float(np.clip(value, 0.0, 1.0))
-        idx = np.searchsorted(arr, v, side="right") - 1
-        idx = min(max(idx, 0), len(arr) - 1)
-        if idx >= len(arr) - 1:
-            return tuple(float(c) for c in colors[-1])
-        left = arr[idx]
-        right = arr[idx + 1]
-        if right <= left:
-            return tuple(float(c) for c in colors[idx])
-        t = (v - left) / (right - left)
-        return tuple(float(c) for c in (colors[idx] * (1.0 - t) + colors[idx + 1] * t))
+        return tuple(
+            float(channel) for channel in self.apply(np.asarray([[value]], np.float32))[0, 0]
+        )
+
+    def apply(self, field: ScalarField) -> RGBAField:
+        values = np.clip(validate_scalar_field(field), 0.0, 1.0)
+        stops = sorted(self.stops, key=lambda stop: stop.position)
+        if not stops:
+            result = np.empty((*values.shape, 4), dtype=np.float32)
+            result[..., :3] = values[..., None]
+            result[..., 3] = 1.0
+            return result
+
+        positions = np.asarray([stop.position for stop in stops], dtype=np.float32)
+        colors = np.asarray([stop.color for stop in stops], dtype=np.float32)
+        rgba = np.empty((*values.shape, 4), dtype=np.float32)
+        for channel in range(4):
+            rgba[..., channel] = np.interp(
+                values,
+                positions,
+                colors[:, channel],
+                left=colors[0, channel],
+                right=colors[-1, channel],
+            )
+        return np.clip(rgba, 0.0, 1.0).astype(np.float32, copy=False)

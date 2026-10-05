@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
-from archetexture.core.parameters import ControlFieldBinding, ParameterValue
+from archetexture.color.ramp import ColorRamp
+from archetexture.core.parameters import (
+    ControlFieldBinding,
+    ControlFieldMapping,
+    ParameterValue,
+)
 
 
 @dataclass
@@ -16,8 +20,11 @@ class OperationInstance:
     influence: float | ControlFieldBinding = 1.0
 
 
-def _default_pipeline() -> list[OperationInstance]:
-    return []
+@dataclass
+class ControlFieldRecipe:
+    source: OperationInstance
+    transforms: list[OperationInstance] = field(default_factory=list)
+    mapping: ControlFieldMapping | None = None
 
 
 @dataclass
@@ -27,15 +34,6 @@ class ProjectRecipe:
     height: int = 256
     seed: int = 0
     source: OperationInstance | None = None
-    transforms: list[OperationInstance] = field(default_factory=_default_pipeline)
-    color_ramp: Any | None = None
-
-
-@dataclass
-class ControlFieldRecipe:
-    source: OperationInstance
     transforms: list[OperationInstance] = field(default_factory=list)
-    mapping: Any | None = None
-
-    def evaluate(self, width: int, height: int) -> Any:
-        return None
+    color_ramp: ColorRamp | None = None
+    control_fields: dict[str, ControlFieldRecipe] = field(default_factory=dict)
