@@ -337,8 +337,9 @@ def test_pipeline_ui_append_reorder_output_description_undo_redo_and_dark(qtbot,
     assert ["opengl", "directx"] in enum_values
     assert ["wrap", "clamp"] in enum_values
     assert panel.transform_selector.count() == 1
-    assert not panel.transform_selector.isEnabled()
-    assert panel.add_button.isEnabled() is False
+    assert panel.transform_selector.itemData(0) == "transform.extract_channel"
+    assert panel.transform_selector.isEnabled()
+    assert panel.add_button.isEnabled()
     assert "Height to Normal → RGBA" in panel.output_description.text()
     assert window.color_ramp_editor.inapplicable_label.isVisible()
     assert not window.color_ramp_editor.create_button.isVisible()

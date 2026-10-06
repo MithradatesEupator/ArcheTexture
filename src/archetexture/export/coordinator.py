@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Callable
 
+from archetexture.core.assets import RenderContext
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.export.image_export import ImageExporter, validate_export_dimension
 
@@ -40,7 +41,13 @@ class ExportCoordinator:
             return self._active > 0
 
     def request(
-        self, recipe: ProjectRecipe, destination: str | Path, *, width: int, height: int
+        self,
+        recipe: ProjectRecipe,
+        destination: str | Path,
+        *,
+        width: int,
+        height: int,
+        render_context: RenderContext | None = None,
     ) -> Future:
         snapshot = deepcopy(recipe)
         width = validate_export_dimension(width, "Width")
@@ -50,9 +57,10 @@ class ExportCoordinator:
             if self._closed:
                 raise RuntimeError("Export coordinator is closed")
             self._active += 1
-        future = self._executor.submit(
-            self.exporter.export_png, snapshot, path, width=width, height=height
-        )
+        kwargs = {"width": width, "height": height}
+        if render_context is not None:
+            kwargs["render_context"] = render_context
+        future = self._executor.submit(self.exporter.export_png, snapshot, path, **kwargs)
         future.add_done_callback(lambda done: self._finished(done, path, width, height))
         return future
 

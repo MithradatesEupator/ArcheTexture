@@ -37,6 +37,7 @@ class LayersPanel(QWidget):
     maskChanged = Signal(str, object)
     maskEditRequested = Signal(str)
     addMaskRequested = Signal(str)
+    addImageMaskRequested = Signal(str)
     maskNavigateRequested = Signal(str)
 
     def __init__(self, parent=None):
@@ -96,10 +97,12 @@ class LayersPanel(QWidget):
         mask_actions = QHBoxLayout()
         mask_edit = QHBoxLayout()
         self.add_mask_button = QPushButton("Add Mask")
+        self.add_image_mask_button = QPushButton("Image Mask…")
         self.edit_mask_button = QPushButton("Edit Mapping")
         self.open_mask_button = QPushButton("Open Field")
         self.clear_mask_button = QPushButton("Clear")
         mask_actions.addWidget(self.add_mask_button)
+        mask_actions.addWidget(self.add_image_mask_button)
         mask_actions.addWidget(self.clear_mask_button)
         mask_edit.addWidget(self.edit_mask_button)
         mask_edit.addWidget(self.open_mask_button)
@@ -107,6 +110,7 @@ class LayersPanel(QWidget):
         mask_buttons.addLayout(mask_edit)
         layout.addLayout(mask_buttons)
         self.add_mask_button.clicked.connect(self._add_mask)
+        self.add_image_mask_button.clicked.connect(self._add_image_mask)
         self.edit_mask_button.clicked.connect(self._edit_mask)
         self.open_mask_button.clicked.connect(self._open_mask)
         self.clear_mask_button.clicked.connect(lambda: self._set_mask(None))
@@ -149,6 +153,7 @@ class LayersPanel(QWidget):
         self.mask_combo.blockSignals(False)
         self.mask_combo.setEnabled(layer is not None and bool(recipe.control_fields))
         self.add_mask_button.setEnabled(layer is not None)
+        self.add_image_mask_button.setEnabled(layer is not None)
         self.edit_mask_button.setEnabled(layer is not None and layer.mask is not None)
         self.open_mask_button.setEnabled(layer is not None and layer.mask is not None)
         self.clear_mask_button.setEnabled(layer is not None and layer.mask is not None)
@@ -219,6 +224,11 @@ class LayersPanel(QWidget):
         identifier = self._selected_id()
         if identifier:
             self.addMaskRequested.emit(identifier)
+
+    def _add_image_mask(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.addImageMaskRequested.emit(identifier)
 
     def _edit_mask(self) -> None:
         identifier = self._selected_id()

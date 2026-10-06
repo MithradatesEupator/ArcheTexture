@@ -42,9 +42,9 @@ class LayerRecipe:
 
 @dataclass(init=False)
 class ProjectRecipe:
-    """Canonical schema-v3 document, with temporary v1-shaped accessors for callers."""
+    """Canonical schema-v4 document, with temporary v1-shaped accessors for callers."""
 
-    schema_version: int = 3
+    schema_version: int = 4
     width: int = 256
     height: int = 256
     seed: int = 0
@@ -53,7 +53,7 @@ class ProjectRecipe:
 
     def __init__(
         self,
-        schema_version: int = 3,
+        schema_version: int = 4,
         width: int = 256,
         height: int = 256,
         seed: int = 0,

@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from archetexture.core.assets import RenderContext
 from archetexture.core.control_fields import ControlFieldEvaluator
 from archetexture.core.fields import (
     RGBAField,
@@ -34,6 +35,7 @@ class _Evaluation:
     registry: OperationDefinitionSet
     control_cache: dict[str, ScalarField] = field(default_factory=dict)
     control_stack: set[str] = field(default_factory=set)
+    render_context: RenderContext = field(default_factory=RenderContext)
 
     def resolve_binding(self, binding: ControlFieldBinding) -> ScalarField:
         try:
@@ -123,8 +125,11 @@ def _run_instance(
         )
         for spec in definition.parameter_specs
     }
+    args = (input_field, parameters, evaluation.width, evaluation.height, seed)
     result = np.asarray(
-        implementation(input_field, parameters, evaluation.width, evaluation.height, seed),
+        implementation(*args, evaluation.render_context)
+        if definition.requires_render_context
+        else implementation(*args),
         dtype=np.float32,
     )
     if definition.output_type == "scalar":
@@ -140,16 +145,16 @@ def _blend(previous: Field, transformed: Field, influence: float | np.ndarray) -
     if previous.shape[:2] != transformed.shape[:2]:
         raise ValueError("Transform output shape does not match its input")
     if previous.ndim != transformed.ndim:
-        if previous.ndim == 2:
+        if transformed.ndim == 3:
             previous_rgba = np.empty((*previous.shape, 4), dtype=np.float32)
             previous_rgba[..., :3] = previous[..., None]
             previous_rgba[..., 3] = 1.0
             previous = previous_rgba
         else:
-            transformed_rgba = np.empty((*transformed.shape, 4), dtype=np.float32)
-            transformed_rgba[..., :3] = transformed[..., None]
-            transformed_rgba[..., 3] = 1.0
-            transformed = transformed_rgba
+            previous = np.asarray(
+                previous[..., 0] * 0.2126 + previous[..., 1] * 0.7152 + previous[..., 2] * 0.0722,
+                dtype=np.float32,
+            )
     alpha = np.asarray(influence, dtype=np.float32)
     if previous.ndim == 3 and alpha.ndim == 2:
         alpha = alpha[..., None]
@@ -195,6 +200,7 @@ def evaluate_recipe(
     width: int | None = None,
     height: int | None = None,
     registry: OperationDefinitionSet = REGISTRY,
+    render_context: RenderContext | None = None,
 ) -> Field:
     ensure_valid_recipe(recipe, registry)
     output_width = recipe.width if width is None else width
@@ -202,7 +208,13 @@ def evaluate_recipe(
     for name, dimension in (("width", output_width), ("height", output_height)):
         if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
             raise ValueError(f"Render {name} must be a positive integer")
-    evaluation = _Evaluation(recipe, output_width, output_height, registry)
+    evaluation = _Evaluation(
+        recipe,
+        output_width,
+        output_height,
+        registry,
+        render_context=render_context or RenderContext(),
+    )
     layer = recipe.layers[0]
     return _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)
 
@@ -214,6 +226,7 @@ def evaluate_layer(
     width: int | None = None,
     height: int | None = None,
     registry: OperationDefinitionSet = REGISTRY,
+    render_context: RenderContext | None = None,
 ) -> Field:
     """Evaluate one layer using the document's shared control-field namespace."""
     ensure_valid_recipe(recipe, registry)
@@ -224,5 +237,11 @@ def evaluate_layer(
     for name, dimension in (("width", output_width), ("height", output_height)):
         if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
             raise ValueError(f"Render {name} must be a positive integer")
-    evaluation = _Evaluation(recipe, output_width, output_height, registry)
+    evaluation = _Evaluation(
+        recipe,
+        output_width,
+        output_height,
+        registry,
+        render_context=render_context or RenderContext(),
+    )
     return _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)

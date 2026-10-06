@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from archetexture.core.assets import RenderContext
 from archetexture.core.fields import (
     RGBAField,
     ScalarField,
@@ -34,11 +35,18 @@ class RenderEngine:
         *,
         width: int | None = None,
         height: int | None = None,
+        render_context: RenderContext | None = None,
     ) -> RenderResult:
         output_width = recipe.width if width is None else width
         output_height = recipe.height if height is None else height
         ensure_valid_recipe(recipe, self.registry)
-        evaluation = _Evaluation(recipe, output_width, output_height, self.registry)
+        evaluation = _Evaluation(
+            recipe,
+            output_width,
+            output_height,
+            self.registry,
+            render_context=render_context or RenderContext(),
+        )
         composite = np.zeros((output_height, output_width, 4), dtype=np.float32)
         scalar_result: ScalarField | None = None
         mask_fields: dict[str, ScalarField] = {}

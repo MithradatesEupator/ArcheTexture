@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from archetexture.core.assets import RenderContext
 from archetexture.core.recipe import ProjectRecipe
 
 
@@ -11,3 +12,4 @@ class RenderRequest:
     recipe: ProjectRecipe
     width: int
     height: int
+    render_context: RenderContext | None

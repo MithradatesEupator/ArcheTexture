@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.operations import OperationDefinition, OperationType
 from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance
@@ -40,12 +41,14 @@ class _DirectDoubleSpinBox(QDoubleSpinBox):
 class PropertyEditor(QWidget):
     valueChanged = Signal(str, object)
     bindingRequested = Signal(str, object, object)
+    assetBrowseRequested = Signal(str, object)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("property-editor")
         self._form = QFormLayout()
         self._control_fields: dict = {}
+        self._project_path = None
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
         heading_font = QFont(self._heading.font())
@@ -115,6 +118,26 @@ class PropertyEditor(QWidget):
             )
             action_row.addWidget(unlink)
             row.addWidget(actions)
+            container.setObjectName(f"parameter-{spec.identifier}")
+            container.setToolTip(spec.description)
+            return container
+
+        if spec.type == ParameterType.IMAGE_ASSET:
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(0, 0, 0, 0)
+            path = value.path if isinstance(value, AssetReference) else ""
+            missing = bool(path) and not RenderContext(self._project_path).exists(value)
+            label = QLabel(("Missing · " if missing else "") + (path or "No image selected"))
+            label.setToolTip(path)
+            button = QPushButton("Relink…" if missing else "Replace…" if path else "Browse…")
+            button.clicked.connect(
+                lambda _checked=False, key=spec.identifier, ref=value: (
+                    self.assetBrowseRequested.emit(key, ref)
+                )
+            )
+            row.addWidget(label, 1)
+            row.addWidget(button)
             container.setObjectName(f"parameter-{spec.identifier}")
             container.setToolTip(spec.description)
             return container
@@ -224,6 +247,9 @@ class PropertyEditor(QWidget):
 
     def set_control_fields(self, control_fields: dict) -> None:
         self._control_fields = control_fields
+
+    def set_project_path(self, project_path) -> None:
+        self._project_path = project_path
 
     @staticmethod
     def _color(value) -> QColor:

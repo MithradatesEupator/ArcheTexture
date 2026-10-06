@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.assets import AssetReference
 from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
 from archetexture.core.recipe import (
     ControlFieldRecipe,
@@ -17,7 +18,7 @@ from archetexture.core.recipe import (
 )
 from archetexture.core.validation import ensure_valid_recipe
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 class ProjectFormatError(ValueError):
@@ -29,6 +30,13 @@ class UnsupportedSchemaVersion(ProjectFormatError):
 
 
 def _encode_value(value: Any) -> Any:
+    if isinstance(value, AssetReference):
+        return {
+            "$type": "asset_reference",
+            "path": value.path,
+            "mode": value.mode,
+            "kind": value.kind,
+        }
     if isinstance(value, ControlFieldBinding):
         return {
             "$type": "control_field_binding",
@@ -60,6 +68,10 @@ def _decode_value(value: Any) -> Any:
             if not isinstance(items, list):
                 raise ProjectFormatError("Tuple encoding must contain an items array")
             return tuple(_decode_value(item) for item in items)
+        if tagged_type == "asset_reference":
+            return AssetReference(
+                str(value.get("path", "")), str(value.get("mode", "")), str(value.get("kind", ""))
+            )
         if tagged_type == "control_field_binding":
             mapping = _decode_mapping(value.get("mapping", {}))
             return ControlFieldBinding(str(value.get("source_id", "")), mapping)
@@ -206,7 +218,7 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
         raise UnsupportedSchemaVersion(
             f"Project schema {version} is newer than supported schema {CURRENT_SCHEMA_VERSION}"
         )
-    if version not in (1, 2, CURRENT_SCHEMA_VERSION):
+    if version not in (1, 2, 3, CURRENT_SCHEMA_VERSION):
         raise UnsupportedSchemaVersion(f"Unsupported project schema version: {version}")
     control_fields = data.get("control_fields", {})
     if not isinstance(control_fields, dict):

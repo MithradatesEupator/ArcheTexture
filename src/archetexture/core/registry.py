@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from archetexture.core.assets import AssetReference
 from archetexture.core.operations import (
     OperationDefinition,
     OperationDefinitionSet,
@@ -8,6 +9,7 @@ from archetexture.core.operations import (
 )
 from archetexture.core.parameters import ParameterSpec, ParameterType
 from archetexture.generators import basic as generators
+from archetexture.generators import image as image_generators
 from archetexture.generators import noise as noise_generators
 from archetexture.generators import patterns as pattern_generators
 from archetexture.transforms import basic as transforms
@@ -44,6 +46,92 @@ def _spec(
 
 def builtin_definitions() -> tuple[OperationDefinition, ...]:
     return (
+        OperationDefinition(
+            "generator.image",
+            1,
+            "Image",
+            "Image",
+            "Loads an RGBA image asset.",
+            OperationType.GENERATOR,
+            (),
+            "rgba",
+            (
+                ParameterSpec(
+                    "asset",
+                    "Image",
+                    ParameterType.IMAGE_ASSET,
+                    AssetReference("", "absolute"),
+                    required=True,
+                    allows_modulation=False,
+                ),
+                ParameterSpec(
+                    "fit",
+                    "Fit",
+                    ParameterType.ENUM,
+                    "Stretch",
+                    options=("Stretch", "Contain", "Cover", "Tile"),
+                    allows_modulation=False,
+                ),
+                ParameterSpec(
+                    "resampling",
+                    "Resampling",
+                    ParameterType.ENUM,
+                    "Bilinear",
+                    options=("Nearest", "Bilinear", "Bicubic", "Lanczos"),
+                    allows_modulation=False,
+                ),
+            ),
+            Seamlessness.UNKNOWN,
+            image_generators.image_source,
+            requires_render_context=True,
+        ),
+        OperationDefinition(
+            "generator.image_channel",
+            1,
+            "Image Channel",
+            "Image",
+            "Loads an image channel as a scalar field.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
+            (
+                ParameterSpec(
+                    "asset",
+                    "Image",
+                    ParameterType.IMAGE_ASSET,
+                    AssetReference("", "absolute"),
+                    required=True,
+                    allows_modulation=False,
+                ),
+                ParameterSpec(
+                    "channel",
+                    "Channel",
+                    ParameterType.ENUM,
+                    "Luminance",
+                    options=("Red", "Green", "Blue", "Alpha", "Luminance"),
+                    allows_modulation=False,
+                ),
+                ParameterSpec(
+                    "fit",
+                    "Fit",
+                    ParameterType.ENUM,
+                    "Stretch",
+                    options=("Stretch", "Contain", "Cover", "Tile"),
+                    allows_modulation=False,
+                ),
+                ParameterSpec(
+                    "resampling",
+                    "Resampling",
+                    ParameterType.ENUM,
+                    "Bilinear",
+                    options=("Nearest", "Bilinear", "Bicubic", "Lanczos"),
+                    allows_modulation=False,
+                ),
+            ),
+            Seamlessness.UNKNOWN,
+            image_generators.image_channel,
+            requires_render_context=True,
+        ),
         OperationDefinition(
             "generator.constant",
             1,
@@ -918,6 +1006,28 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             (),
             Seamlessness.PRESERVES,
             spatial_transforms.edge_detail,
+        ),
+        OperationDefinition(
+            "transform.extract_channel",
+            1,
+            "Extract Channel",
+            "Color",
+            "Extracts an RGBA channel into a scalar field.",
+            OperationType.TRANSFORM,
+            ("rgba",),
+            "scalar",
+            (
+                ParameterSpec(
+                    "channel",
+                    "Channel",
+                    ParameterType.ENUM,
+                    "Luminance",
+                    options=("Red", "Green", "Blue", "Alpha", "Luminance"),
+                    allows_modulation=False,
+                ),
+            ),
+            Seamlessness.PRESERVES,
+            image_generators.extract_image_channel,
         ),
         OperationDefinition(
             "transform.height_to_normal",

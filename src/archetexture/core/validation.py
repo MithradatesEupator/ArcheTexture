@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.assets import AssetReference
 from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.parameters import (
     ControlFieldBinding,
@@ -128,6 +130,18 @@ def _validate_parameter_value(
             and len(value) == 2
             and all(_finite_number(component) for component in value)
         )
+    elif kind == ParameterType.IMAGE_ASSET:
+        valid = (
+            isinstance(value, AssetReference)
+            and bool(value.path.strip())
+            and value.kind == "image"
+            and value.mode in {"absolute", "project_relative"}
+            and not (value.mode == "absolute" and not Path(value.path).is_absolute())
+            and not (
+                value.mode == "project_relative"
+                and (Path(value.path).is_absolute() or ".." in Path(value.path).parts)
+            )
+        )
     if not valid:
         issues.append(ValidationIssue(path, f"must have type {kind.value}"))
         return
@@ -137,6 +151,7 @@ def _validate_parameter_value(
         ParameterType.ENUM,
         ParameterType.COLOR,
         ParameterType.POSITION_2D,
+        ParameterType.IMAGE_ASSET,
     }:
         number = float(value)
         if spec.min_value is not None and number < spec.min_value:
@@ -268,8 +283,8 @@ def validate_recipe(
         return [ValidationIssue("recipe", "must be a ProjectRecipe")]
     if not isinstance(recipe.schema_version, int) or isinstance(recipe.schema_version, bool):
         issues.append(ValidationIssue("schema_version", "must be an integer"))
-    elif recipe.schema_version != 3:
-        issues.append(ValidationIssue("schema_version", "supported schema version is 3"))
+    elif recipe.schema_version != 4:
+        issues.append(ValidationIssue("schema_version", "supported schema version is 4"))
     for name in ("width", "height"):
         value = getattr(recipe, name)
         if (

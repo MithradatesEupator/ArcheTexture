@@ -163,7 +163,7 @@ def test_masked_render_export_and_schema3_round_trip_are_equal(tmp_path):
     project_path = tmp_path / "masked.archetexture"
     save_project(recipe, project_path)
     payload = json.loads(project_path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["layers"][1]["mask"]["source_id"] == "mask"
     reopened = load_project(project_path)
     assert reopened == recipe
@@ -192,7 +192,7 @@ def test_mask_mapping_change_is_undoable_and_redoable():
     assert document.recipe.layers[1].mask == changed
 
 
-def test_schema1_and_schema2_migrate_to_canonical_schema3_without_masks():
+def test_schema1_and_schema2_migrate_to_canonical_schema4_without_masks():
     v1 = {
         "schema_version": 1,
         "source": {
@@ -203,7 +203,7 @@ def test_schema1_and_schema2_migrate_to_canonical_schema3_without_masks():
         },
     }
     migrated1 = migrate_recipe(v1)
-    assert migrated1.schema_version == 3 and migrated1.layers[0].mask is None
+    assert migrated1.schema_version == 4 and migrated1.layers[0].mask is None
     v2 = {
         "schema_version": 2,
         "layers": [
@@ -220,7 +220,7 @@ def test_schema1_and_schema2_migrate_to_canonical_schema3_without_masks():
         ],
     }
     migrated2 = migrate_recipe(v2)
-    assert migrated2.schema_version == 3 and migrated2.layers[0].mask is None
+    assert migrated2.schema_version == 4 and migrated2.layers[0].mask is None
 
 
 def test_malformed_or_missing_mask_reference_is_rejected():

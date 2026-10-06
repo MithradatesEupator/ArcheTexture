@@ -15,6 +15,7 @@ class ParameterType(str, Enum):
     PERCENT = "percentage"
     COLOR = "color"
     POSITION_2D = "position_2d"
+    IMAGE_ASSET = "image_asset"
 
 
 @dataclass(frozen=True)

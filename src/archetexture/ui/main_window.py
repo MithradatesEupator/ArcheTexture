@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.color.ramp import ColorRamp
+from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import (
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
         self.pipeline_panel.transformEnabled.connect(self._transform_enabled)
         self.pipeline_panel.selectionChanged.connect(self._select_instance)
         self.property_editor.valueChanged.connect(self._property_changed)
+        self.property_editor.assetBrowseRequested.connect(self._browse_main_asset)
         self.property_editor.bindingRequested.connect(self._main_binding_requested)
         self.control_fields_editor.createRequested.connect(self._create_control_field)
         self.control_fields_editor.fieldSelected.connect(self._control_field_selected)
@@ -114,6 +116,9 @@ class MainWindow(QMainWindow):
         self.control_fields_editor.transformMoved.connect(self._control_transform_moved)
         self.control_fields_editor.transformEnabled.connect(self._control_transform_enabled)
         self.control_fields_editor.valueChanged.connect(self._control_value_changed)
+        self.control_fields_editor.property_editor.assetBrowseRequested.connect(
+            self._browse_control_asset
+        )
         self.control_fields_editor.bindingRequested.connect(self._control_binding_requested)
         self.color_ramp_editor.rampEdited.connect(self._color_ramp_changed)
         self.color_ramp_editor.previewRequested.connect(self._preview_color_ramp)
@@ -129,6 +134,7 @@ class MainWindow(QMainWindow):
         self.layers_panel.maskChanged.connect(self._layer_mask_changed)
         self.layers_panel.maskEditRequested.connect(self._edit_layer_mask)
         self.layers_panel.addMaskRequested.connect(self._add_layer_mask)
+        self.layers_panel.addImageMaskRequested.connect(self._add_image_layer_mask)
         self.layers_panel.maskNavigateRequested.connect(self._navigate_to_layer_mask)
 
         center_panel = QWidget(self)
@@ -200,6 +206,7 @@ class MainWindow(QMainWindow):
         self.save_action = file_menu.addAction("&Save")
         self.save_as_action = file_menu.addAction("Save &As…")
         self.export_action = file_menu.addAction("Export PNG…")
+        self.import_image_action = file_menu.addAction("Import Image as Layer…")
         self.export_action.setShortcut("Ctrl+Shift+E")
         file_menu.addSeparator()
         self.exit_action = file_menu.addAction("E&xit")
@@ -239,6 +246,7 @@ class MainWindow(QMainWindow):
         self.save_action.triggered.connect(lambda: self.save_project())
         self.save_as_action.triggered.connect(lambda: self.save_project(save_as=True))
         self.export_action.triggered.connect(self.export_png)
+        self.import_image_action.triggered.connect(self._import_image_as_layer)
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo)
         self.redo_action.triggered.connect(self.redo)
@@ -338,7 +346,9 @@ class MainWindow(QMainWindow):
                 )
         self.pipeline_panel.set_recipe(recipe, self._selected_instance_id, layer)
         self.property_editor.set_control_fields(recipe.control_fields)
+        self.property_editor.set_project_path(self.document.project_path)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
+        self.control_fields_editor.property_editor.set_project_path(self.document.project_path)
         self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
             layer.color_ramp,
@@ -396,6 +406,7 @@ class MainWindow(QMainWindow):
                 recipe,
                 width=recipe.width,
                 height=recipe.height,
+                render_context=RenderContext(self.document.project_path),
             )
         except Exception as exc:
             self.viewport.set_error(str(exc))
@@ -456,7 +467,11 @@ class MainWindow(QMainWindow):
     def _start_export(self, destination: str | Path, width: int, height: int) -> bool:
         try:
             self.export_coordinator.request(
-                self.document.recipe, destination, width=width, height=height
+                self.document.recipe,
+                destination,
+                width=width,
+                height=height,
+                render_context=RenderContext(self.document.project_path),
             )
         except Exception as exc:
             QMessageBox.critical(self, "Export failed", str(exc))
@@ -527,12 +542,24 @@ class MainWindow(QMainWindow):
         definition = REGISTRY.get(operation_id)
         if definition.operation_type != OperationType.GENERATOR:
             return
+        selected_asset = None
+        if operation_id in {"generator.image", "generator.image_channel"}:
+            path = self._choose_image()
+            if not path:
+                self._refresh_document(request_render=False)
+                return
+            selected_asset = self._asset_reference(path)
         instance_id = layer.source.instance_id if layer.source else f"source-{uuid.uuid4().hex[:8]}"
+        parameters = {spec.identifier: spec.default for spec in definition.parameter_specs}
+        if selected_asset is not None:
+            parameters["asset"] = selected_asset
+        if definition.output_type == "rgba":
+            layer.color_ramp = None
         layer.source = OperationInstance(
             instance_id,
             operation_id,
             definition.version,
-            parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+            parameters=parameters,
         )
         self._commit_recipe(recipe, instance_id)
 
@@ -817,6 +844,111 @@ class MainWindow(QMainWindow):
         self.right_tabs.setCurrentWidget(self.control_fields_editor)
         self._commit_recipe(recipe, control_field_id=identifier)
 
+    def _asset_reference(self, path: str | Path) -> AssetReference:
+        selected = Path(path).resolve()
+        project = Path(self.document.project_path).resolve() if self.document.project_path else None
+        if project is not None:
+            try:
+                relative = selected.relative_to(project.parent)
+                return AssetReference(relative.as_posix(), "project_relative")
+            except ValueError:
+                pass
+        return AssetReference(str(selected), "absolute")
+
+    def _choose_image(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All files (*)",
+        )
+        return path
+
+    def _browse_main_asset(self, key: str, _current) -> None:
+        path = self._choose_image()
+        if path:
+            self._property_changed(key, self._asset_reference(path))
+
+    def _browse_control_asset(self, key: str, _current) -> None:
+        path = self._choose_image()
+        if not path or not self._selected_control_field_id:
+            return
+        control = self.document.recipe.control_fields.get(self._selected_control_field_id)
+        if control is None:
+            return
+        instance = (
+            control.source
+            if control.source.instance_id == self.control_fields_editor._selected_operation_id
+            else next(
+                (
+                    item
+                    for item in control.transforms
+                    if item.instance_id == self.control_fields_editor._selected_operation_id
+                ),
+                None,
+            )
+        )
+        if instance is not None:
+            self._control_value_changed(
+                self._selected_control_field_id,
+                (instance.instance_id, key),
+                self._asset_reference(path),
+            )
+
+    def _import_image_as_layer(self, *_args) -> None:
+        path = self._choose_image()
+        if not path:
+            return
+        recipe = self.document.recipe
+        definition = REGISTRY.get("generator.image")
+        name = Path(path).stem or "Image"
+        source = OperationInstance(
+            f"source-{uuid.uuid4().hex[:12]}",
+            definition.identifier,
+            definition.version,
+            parameters={
+                "asset": self._asset_reference(path),
+                "fit": "Stretch",
+                "resampling": "Bilinear",
+            },
+        )
+        layer = LayerRecipe(f"layer-{uuid.uuid4().hex[:12]}", name, source, color_ramp=None)
+        recipe.layers.append(layer)
+        self._selected_layer_id, self._selected_instance_id = layer.layer_id, source.instance_id
+        self._commit_recipe(recipe, source.instance_id)
+
+    def _add_image_layer_mask(self, layer_id: str) -> None:
+        path = self._choose_image()
+        if not path:
+            return
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is None:
+            return
+        stem = re.sub(r"[^A-Za-z0-9]+", "-", layer.name).strip("-").lower() or "layer"
+        identifier = f"{stem}-image-mask"
+        suffix = 2
+        while identifier in recipe.control_fields:
+            identifier = f"{stem}-image-mask-{suffix}"
+            suffix += 1
+        definition = REGISTRY.get("generator.image_channel")
+        source = OperationInstance(
+            f"{identifier}-source",
+            definition.identifier,
+            definition.version,
+            parameters={
+                "asset": self._asset_reference(path),
+                "channel": "Luminance",
+                "fit": "Stretch",
+                "resampling": "Bilinear",
+            },
+        )
+        recipe.control_fields[identifier] = ControlFieldRecipe(source)
+        layer.mask = ControlFieldBinding(identifier)
+        self._selected_control_field_id = identifier
+        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self._commit_recipe(recipe, control_field_id=identifier)
+
     def _control_field_selected(self, identifier: str) -> None:
         self._selected_control_field_id = identifier
 
@@ -826,17 +958,7 @@ class MainWindow(QMainWindow):
         while f"control-{index}" in recipe.control_fields:
             index += 1
         identifier = f"control-{index}"
-        definition = next(
-            (
-                item
-                for item in REGISTRY.definitions.values()
-                if item.operation_type == OperationType.GENERATOR and item.output_type == "scalar"
-            ),
-            None,
-        )
-        if definition is None:
-            self.statusBar().showMessage("No scalar generators are registered", 5000)
-            return
+        definition = REGISTRY.get("generator.constant")
         recipe.control_fields[identifier] = ControlFieldRecipe(
             source=OperationInstance(
                 f"{identifier}-source",

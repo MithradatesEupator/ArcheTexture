@@ -127,6 +127,27 @@ Continuous integration runs these checks on Ubuntu and Windows with Python
 - Project files use explicit schema-versioned JSON encoding and reconstruct
   domain objects on load.
 
+## Image assets
+
+The Image generator produces RGBA fields; Image Channel produces a scalar from
+red, green, blue, alpha, or Rec. 709 luminance. Extract Channel converts an RGBA
+pipeline field to scalar. Images are EXIF-oriented on decode and preserve source
+alpha. Fit modes are Stretch, Contain, Cover, and Tile, with Nearest, Bilinear,
+Bicubic, or Lanczos resampling. Contain pads with transparent pixels.
+
+Image references are stored as either absolute paths or paths relative to the
+project file. Relative references resolve beside the project, so moving a
+project together with its asset directory preserves the link. Missing files do
+not prevent project loading; rendering reports a path-specific error and image
+parameters offer a relink action. A runtime-only cache holds up to eight
+decoded images and keys entries by path, file size, and modification time; no
+image pixels are embedded in the project document.
+
+Use **File → Import Image as Layer** to create a regular image-backed layer, or
+**Image Mask…** in the Layers panel to attach an image-derived control field as
+a mask. Existing projects from schemas v1 through v3 migrate to schema v4 when
+loaded and are written as v4 when saved.
+
 ## Dependency policy and limitations
 
 Runtime and development dependencies are declared in `pyproject.toml`. There is

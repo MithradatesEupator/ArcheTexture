@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     import numpy as np
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 else:
     Field = Any
 
-OperationImplementation = Callable[[Field | None, Mapping[str, Any], int, int, int], Field]
+OperationImplementation = Callable[..., Field]
 
 
 class OperationType(str, Enum):
@@ -41,6 +41,7 @@ class OperationDefinition:
     parameter_specs: tuple[Any, ...] = ()
     seamlessness: Seamlessness = Seamlessness.UNKNOWN
     implementation: OperationImplementation | None = field(default=None, compare=False, repr=False)
+    requires_render_context: bool = False
 
 
 @dataclass
@@ -84,6 +85,7 @@ class OperationDefinitionSet:
             parameter_specs=definition.parameter_specs,
             seamlessness=definition.seamlessness,
             implementation=executor,
+            requires_render_context=definition.requires_render_context,
         )
 
     def unregister(self, identifier: str) -> None:

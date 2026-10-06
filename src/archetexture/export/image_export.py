@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from archetexture.core.assets import RenderContext
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.render.engine import RenderEngine
 from archetexture.render.pixels import rgba_float_to_uint8
@@ -33,6 +34,7 @@ class ImageExporter:
         *,
         width: int | None = None,
         height: int | None = None,
+        render_context: RenderContext | None = None,
     ) -> Path:
         snapshot = deepcopy(recipe)
         width = validate_export_dimension(snapshot.width if width is None else width, "Width")
@@ -44,7 +46,9 @@ class ImageExporter:
             raise ExportError(f"Output directory does not exist: {destination.parent}")
 
         try:
-            result = self.engine.render(snapshot, width=width, height=height)
+            result = self.engine.render(
+                snapshot, width=width, height=height, render_context=render_context
+            )
             pixels = rgba_float_to_uint8(result.rgba_field)
         except Exception as exc:
             raise ExportError(f"Could not render PNG: {exc}") from exc
