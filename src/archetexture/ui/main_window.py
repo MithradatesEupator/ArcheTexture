@@ -12,14 +12,18 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QSplitter,
     QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
+from archetexture.color.ramp import ColorRamp
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ControlFieldBinding
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
+from archetexture.ui.color_ramp_editor import ColorRampEditor
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.property_editor import PropertyEditor
 from archetexture.ui.viewport import TextureViewport
@@ -48,6 +52,7 @@ class MainWindow(QMainWindow):
         self.resize(1360, 850)
         self.pipeline_panel = PipelinePanel(self)
         self.viewport = TextureViewport(self)
+        self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
         self.pipeline_panel.sourceChanged.connect(self._source_changed)
         self.pipeline_panel.transformAdded.connect(self._transform_added)
@@ -56,10 +61,19 @@ class MainWindow(QMainWindow):
         self.pipeline_panel.transformEnabled.connect(self._transform_enabled)
         self.pipeline_panel.selectionChanged.connect(self._select_instance)
         self.property_editor.valueChanged.connect(self._property_changed)
+        self.color_ramp_editor.rampEdited.connect(self._color_ramp_changed)
+        self.color_ramp_editor.previewRequested.connect(self._preview_color_ramp)
+
+        center_panel = QWidget(self)
+        center_layout = QVBoxLayout(center_panel)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(4)
+        center_layout.addWidget(self.viewport, 1)
+        center_layout.addWidget(self.color_ramp_editor, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.pipeline_panel)
-        splitter.addWidget(self.viewport)
+        splitter.addWidget(center_panel)
         splitter.addWidget(self.property_editor)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -110,6 +124,7 @@ class MainWindow(QMainWindow):
         *,
         request_render: bool,
         refresh_properties: bool = True,
+        reset_ramp_selection: bool = False,
     ) -> None:
         recipe = self.document.recipe
         if self._selected_instance_id is None or not self._contains_instance(
@@ -117,6 +132,10 @@ class MainWindow(QMainWindow):
         ):
             self._selected_instance_id = recipe.source.instance_id if recipe.source else None
         self.pipeline_panel.set_recipe(recipe, self._selected_instance_id)
+        self.color_ramp_editor.set_ramp(
+            recipe.color_ramp,
+            reset_selection=reset_ramp_selection,
+        )
         if refresh_properties:
             self._refresh_property_editor(recipe)
         self._update_title_and_actions()
@@ -152,10 +171,10 @@ class MainWindow(QMainWindow):
         self.redo_action.setEnabled(self.document.can_redo)
         self.save_action.setEnabled(True)
 
-    def _request_render(self) -> None:
+    def _request_render(self, recipe: ProjectRecipe | None = None) -> None:
         if self._closing:
             return
-        recipe = self.document.recipe
+        recipe = recipe or self.document.recipe
         self.statusBar().showMessage("Rendering…")
         try:
             self.render_coordinator.request(
@@ -166,6 +185,16 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.viewport.set_error(str(exc))
             self.statusBar().showMessage(f"Render request failed: {exc}")
+
+    def _color_ramp_changed(self, color_ramp: ColorRamp | None) -> None:
+        recipe = self.document.recipe
+        recipe.color_ramp = color_ramp
+        self._commit_recipe(recipe, self._selected_instance_id)
+
+    def _preview_color_ramp(self, color_ramp: ColorRamp) -> None:
+        recipe = self.document.recipe
+        recipe.color_ramp = color_ramp
+        self._request_render(recipe)
 
     def _on_render_complete(self, outcome: RenderOutcome) -> None:
         if self._closing or outcome.request_id != self.render_coordinator.latest_request_id:
@@ -340,7 +369,7 @@ class MainWindow(QMainWindow):
             return False
         recipe = self.document.new_document()
         self._selected_instance_id = recipe.source.instance_id if recipe.source else None
-        self._refresh_document(request_render=True)
+        self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 
     def open_project(self, path: str | Path | None = None, *_args) -> bool:
@@ -363,7 +392,7 @@ class MainWindow(QMainWindow):
             return False
         recipe = self.document.replace_with_project(candidate)
         self._selected_instance_id = recipe.source.instance_id if recipe.source else None
-        self._refresh_document(request_render=True)
+        self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 
     def save_project(self, path: str | Path | None = None, *, save_as: bool = False) -> bool:

@@ -113,6 +113,11 @@ class PipelinePanel(QWidget):
         self.transform_list.blockSignals(False)
         self._syncing = False
         self._update_buttons()
+        self.output_description.setText(
+            "Scalar → Color Ramp → RGBA"
+            if recipe.color_ramp is not None
+            else "Scalar → Grayscale RGBA"
+        )
 
     def _find_item(self, instance_id: str) -> QListWidgetItem | None:
         for index in range(self.transform_list.count()):
