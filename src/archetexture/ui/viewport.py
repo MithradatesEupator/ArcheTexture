@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
+from PySide6.QtGui import QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from archetexture.render.engine import RenderResult
 from archetexture.render.pixels import rgba_float_to_uint8
+from archetexture.ui.theme import workspace_checkerboard_colors
 
 
 class TextureViewport(QWidget):
@@ -45,10 +46,7 @@ class TextureViewport(QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
-        dark_mode = self.palette().color(self.palette().ColorRole.Window).lightness() < 128
-        background = QColor("#202329") if dark_mode else QColor("#d8dce2")
-        light = QColor("#30343b") if dark_mode else QColor("#eef0f3")
-        dark = QColor("#272a30") if dark_mode else QColor("#dfe3e8")
+        background, light, dark = workspace_checkerboard_colors(self.palette())
         painter.fillRect(self.rect(), background)
         tile_size = 18
         for row in range(0, self.height(), tile_size):

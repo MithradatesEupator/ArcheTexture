@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.ui.theme import ramp_checkerboard_colors
 
 
 class _RampPositionSpinBox(QDoubleSpinBox):
@@ -76,11 +77,11 @@ class RampPreview(QWidget):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        palette = self.palette()
+        painter.fillRect(self.rect(), palette.color(palette.ColorRole.Window))
         track = self.track_rect()
         tile = 9
-        dark_mode = self.palette().color(self.palette().ColorRole.Window).lightness() < 128
-        checker_light = QColor("#444952") if dark_mode else QColor("#ffffff")
-        checker_dark = QColor("#30343b") if dark_mode else QColor("#cfd4dc")
+        checker_light, checker_dark = ramp_checkerboard_colors(palette)
         for y in range(track.top(), track.bottom() + 1, tile):
             for x in range(track.left(), track.right() + 1, tile):
                 shade = (
@@ -105,10 +106,10 @@ class RampPreview(QWidget):
                     gradient.setColorAt(stop.position, self._qcolor(stop.color))
             painter.fillRect(track, gradient)
         else:
-            painter.setPen(QColor("#566171"))
+            painter.setPen(palette.color(palette.ColorRole.Text))
             painter.drawText(track, Qt.AlignmentFlag.AlignCenter, "Grayscale output")
 
-        painter.setPen(QPen(QColor("#525a66"), 1))
+        painter.setPen(QPen(palette.color(palette.ColorRole.Mid), 1))
         painter.drawRect(track)
         for index, stop in enumerate(stops):
             x = self.x_from_position(stop.position)
@@ -123,8 +124,14 @@ class RampPreview(QWidget):
                 ]
             )
             selected = index == self._selected_index
-            painter.setPen(QPen(QColor("#1f2937"), 1.5 if selected else 1))
-            painter.setBrush(QColor("#f4c542") if selected else QColor("#f8fafc"))
+            outline = palette.color(
+                palette.ColorRole.HighlightedText if selected else palette.ColorRole.Window
+            )
+            fill = palette.color(
+                palette.ColorRole.Highlight if selected else palette.ColorRole.WindowText
+            )
+            painter.setPen(QPen(outline, 1.5 if selected else 1))
+            painter.setBrush(fill)
             painter.drawPolygon(diamond)
 
     def _hit_test(self, x: float, y: float) -> int | None:

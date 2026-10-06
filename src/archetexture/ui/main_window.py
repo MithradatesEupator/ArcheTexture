@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QActionGroup, QColor, QPalette
+from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -39,6 +39,7 @@ from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.property_editor import PropertyEditor
+from archetexture.ui.theme import palette_for_mode, theme_stylesheet
 from archetexture.ui.viewport import TextureViewport
 
 
@@ -197,28 +198,14 @@ class MainWindow(QMainWindow):
     def _configure_theme(self) -> None:
         self._system_palette = self._application.style().standardPalette()
         settings = self._theme_settings()
-        mode = settings.value("appearance/theme", "system")
-        self._set_theme(mode if mode in {"system", "light", "dark"} else "system", persist=False)
+        mode = settings.value("appearance/theme", "dark")
+        self._set_theme(mode if mode in {"system", "light", "dark"} else "dark", persist=False)
 
     def _set_theme(self, mode: str, *, persist: bool = True) -> None:
-        if mode == "system":
-            self._application.setPalette(self._system_palette)
-        else:
-            palette = QPalette()
-            if mode == "dark":
-                palette.setColor(QPalette.ColorRole.Window, QColor("#25282d"))
-                palette.setColor(QPalette.ColorRole.WindowText, QColor("#e6e8eb"))
-                palette.setColor(QPalette.ColorRole.Base, QColor("#191b1f"))
-                palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d3036"))
-                palette.setColor(QPalette.ColorRole.Text, QColor("#e6e8eb"))
-                palette.setColor(QPalette.ColorRole.Button, QColor("#353940"))
-                palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e6e8eb"))
-                palette.setColor(QPalette.ColorRole.Highlight, QColor("#4b86c6"))
-                palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-                palette.setColor(QPalette.ColorRole.Mid, QColor("#555b64"))
-            else:
-                palette = self._system_palette
-            self._application.setPalette(palette)
+        if mode not in {"system", "light", "dark"}:
+            mode = "dark"
+        self._application.setPalette(palette_for_mode(mode, self._system_palette))
+        self._application.setStyleSheet(theme_stylesheet(mode))
         if hasattr(self, "theme_actions"):
             self.theme_actions[mode].setChecked(True)
         if persist:
