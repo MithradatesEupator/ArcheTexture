@@ -96,6 +96,44 @@ def test_identical_layer_cache_and_uncached_reference_are_pixel_equal():
     np.testing.assert_array_equal(cold.mask_fields["layer-0"], reference.mask_fields["layer-0"])
 
 
+@pytest.mark.parametrize(
+    ("source_id", "source_parameters", "transforms"),
+    [
+        (
+            "generator.fractal_noise",
+            {"seed": 18, "scale": 3.5},
+            [op("transform.height_to_normal", "height-normal", strength=1.3)],
+        ),
+        (
+            "generator.seamless_fractal_noise",
+            {"seed": 18, "cells_x": 3, "cells_y": 2, "octaves": 3},
+            [],
+        ),
+    ],
+)
+def test_cached_render_matches_uncached_height_normal_and_seamless_outputs(
+    source_id, source_parameters, transforms
+):
+    project = ProjectRecipe(
+        width=24,
+        height=16,
+        layers=[
+            LayerRecipe(
+                "specialized",
+                "Specialized",
+                op(source_id, "specialized-source", **source_parameters),
+                transforms,
+            )
+        ],
+    )
+    engine = RenderEngine()
+    cached = engine.render(project)
+    warm = engine.render(project)
+    uncached = engine.render_uncached(project)
+    np.testing.assert_array_equal(cached.rgba_field, warm.rgba_field)
+    np.testing.assert_array_equal(cached.rgba_field, uncached.rgba_field)
+
+
 def test_opacity_blend_reorder_visibility_and_one_layer_edits_reuse_unrelated_layers():
     project = recipe()
     engine = RenderEngine()
