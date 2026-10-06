@@ -342,7 +342,7 @@ def test_populated_json_round_trip_restores_domain_types_and_render():
         path = Path(directory) / "populated.archetexture"
         save_project(recipe, path)
         document = json.loads(path.read_text(encoding="utf-8"))
-        assert document["schema_version"] == 2
+        assert document["schema_version"] == 3
         assert document["layers"][0]["source"]["operation_id"] == "generator.linear_gradient"
         assert (
             document["layers"][0]["transforms"][0]["parameters"]["threshold"]["$type"]
@@ -512,7 +512,7 @@ def test_invalid_transform_chain_and_future_schema_are_rejected(tmp_path):
     recipe.transforms = [operation("generator.constant", "wrong-kind")]
     assert any("must be a transform" in issue.message for issue in validate_recipe(recipe))
     future = tmp_path / "future.archetexture"
-    future.write_text('{"schema_version": 3}', encoding="utf-8")
+    future.write_text('{"schema_version": 4}', encoding="utf-8")
     with pytest.raises(UnsupportedSchemaVersion):
         load_project(future)
     malformed = tmp_path / "broken.archetexture"

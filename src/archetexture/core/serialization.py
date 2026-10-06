@@ -17,7 +17,7 @@ from archetexture.core.recipe import (
 )
 from archetexture.core.validation import ensure_valid_recipe
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class ProjectFormatError(ValueError):
@@ -173,10 +173,11 @@ def _encode_layer(layer: LayerRecipe) -> dict[str, Any]:
         "source": _encode_instance(layer.source),
         "transforms": [_encode_instance(item) for item in layer.transforms],
         "color_ramp": _encode_ramp(layer.color_ramp),
+        "mask": _encode_value(layer.mask),
     }
 
 
-def _decode_layer(payload: Any, index: int) -> LayerRecipe:
+def _decode_layer(payload: Any, index: int, *, supports_masks: bool = True) -> LayerRecipe:
     if not isinstance(payload, dict):
         raise ProjectFormatError(f"layers[{index}] must be an object")
     transforms = payload.get("transforms", [])
@@ -191,6 +192,7 @@ def _decode_layer(payload: Any, index: int) -> LayerRecipe:
         source=_decode_instance(payload.get("source")),
         transforms=[_decode_instance(item) for item in transforms],
         color_ramp=_decode_ramp(payload.get("color_ramp")),
+        mask=_decode_value(payload.get("mask")) if supports_masks else None,
     )
 
 
@@ -204,7 +206,7 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
         raise UnsupportedSchemaVersion(
             f"Project schema {version} is newer than supported schema {CURRENT_SCHEMA_VERSION}"
         )
-    if version not in (1, CURRENT_SCHEMA_VERSION):
+    if version not in (1, 2, CURRENT_SCHEMA_VERSION):
         raise UnsupportedSchemaVersion(f"Unsupported project schema version: {version}")
     control_fields = data.get("control_fields", {})
     if not isinstance(control_fields, dict):
@@ -231,7 +233,10 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
         raw_layers = data.get("layers")
         if not isinstance(raw_layers, list):
             raise ProjectFormatError("layers must be an array")
-        layers = [_decode_layer(item, index) for index, item in enumerate(raw_layers)]
+        layers = [
+            _decode_layer(item, index, supports_masks=version >= 3)
+            for index, item in enumerate(raw_layers)
+        ]
     recipe = ProjectRecipe(
         schema_version=CURRENT_SCHEMA_VERSION,
         width=data.get("width", 256),

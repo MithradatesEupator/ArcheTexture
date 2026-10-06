@@ -78,11 +78,24 @@ def _layer_state(layer: LayerRecipe, registry: OperationDefinitionSet) -> bool |
 
 def recipe_seamlessness(recipe: ProjectRecipe, registry: OperationDefinitionSet = REGISTRY) -> str:
     """Conservatively report whether the visible composite is proven tile-periodic."""
-    states = [
-        _layer_state(layer, registry)
-        for layer in recipe.layers
-        if layer.enabled and layer.opacity > 0.0
-    ]
+
+    def with_mask(layer: LayerRecipe) -> bool | None:
+        state = _layer_state(layer, registry)
+        if layer.mask is None:
+            return state
+        control = recipe.control_fields.get(layer.mask.source_id)
+        if control is None:
+            return None
+        mask_state = _layer_state(
+            LayerRecipe("mask", "mask", control.source, control.transforms), registry
+        )
+        if state is False or mask_state is False:
+            return False
+        if state is True and mask_state is True:
+            return True
+        return None
+
+    states = [with_mask(layer) for layer in recipe.layers if layer.enabled and layer.opacity > 0.0]
     if not states:
         return "Unknown"
     if any(state is False for state in states):

@@ -17,7 +17,7 @@ def seam_check_rgba(rgba: np.ndarray) -> np.ndarray:
 
 
 class TextureViewport(QWidget):
-    DISPLAY_MODES = ("single", "tile_3x3", "seam_check")
+    DISPLAY_MODES = ("single", "tile_3x3", "seam_check", "mask_preview")
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -27,6 +27,7 @@ class TextureViewport(QWidget):
         self._display_mode = "single"
         self._message = "Render a recipe to see its texture."
         self._rgba: np.ndarray | None = None
+        self._mask_pixmap = QPixmap()
 
     @property
     def rendered_field(self) -> np.ndarray | None:
@@ -42,6 +43,18 @@ class TextureViewport(QWidget):
         if mode == self._display_mode:
             return
         self._display_mode = mode
+        self._update_presentation_pixmap()
+        self.update()
+
+    def set_mask_preview(self, mask: np.ndarray | None) -> None:
+        if mask is None:
+            self._mask_pixmap = QPixmap()
+        else:
+            gray = np.clip(mask, 0.0, 1.0).astype(np.float32)
+            rgba = np.empty((*gray.shape, 4), dtype=np.float32)
+            rgba[..., :3] = gray[..., None]
+            rgba[..., 3] = 1.0
+            self._mask_pixmap = self._pixmap_from_rgba(rgba)
         self._update_presentation_pixmap()
         self.update()
 
@@ -67,6 +80,9 @@ class TextureViewport(QWidget):
         return QPixmap.fromImage(image)
 
     def _update_presentation_pixmap(self) -> None:
+        if self._display_mode == "mask_preview" and not self._mask_pixmap.isNull():
+            self._presentation_pixmap = self._mask_pixmap
+            return
         if self._rgba is None or self._display_mode != "seam_check":
             self._presentation_pixmap = self._pixmap
             return
@@ -77,6 +93,7 @@ class TextureViewport(QWidget):
         self._pixmap = QPixmap()
         self._presentation_pixmap = QPixmap()
         self._rgba = None
+        self._mask_pixmap = QPixmap()
         self._message = message
         self.update()
 

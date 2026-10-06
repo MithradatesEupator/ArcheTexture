@@ -11,15 +11,17 @@ from archetexture.core.fields import (
     validate_scalar_field,
 )
 from archetexture.core.operations import OperationDefinitionSet
-from archetexture.core.pipeline import evaluate_layer
+from archetexture.core.pipeline import _evaluate_pipeline, _Evaluation
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.core.validation import ensure_valid_recipe
 
 
 @dataclass(frozen=True)
 class RenderResult:
     scalar_field: ScalarField | None
     rgba_field: RGBAField
+    mask_fields: dict[str, ScalarField] | None = None
 
 
 class RenderEngine:
@@ -35,17 +37,18 @@ class RenderEngine:
     ) -> RenderResult:
         output_width = recipe.width if width is None else width
         output_height = recipe.height if height is None else height
+        ensure_valid_recipe(recipe, self.registry)
+        evaluation = _Evaluation(recipe, output_width, output_height, self.registry)
         composite = np.zeros((output_height, output_width, 4), dtype=np.float32)
         scalar_result: ScalarField | None = None
+        mask_fields: dict[str, ScalarField] = {}
+        for layer in recipe.layers:
+            if layer.mask is not None:
+                mask_fields[layer.layer_id] = evaluation.resolve_binding(layer.mask)
         visible = [layer for layer in recipe.layers if layer.enabled]
         for layer in visible:
-            field = evaluate_layer(
-                recipe,
-                layer,
-                width=output_width,
-                height=output_height,
-                registry=self.registry,
-            )
+            field = _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)
+            mask = mask_fields.get(layer.layer_id)
             if field.ndim == 2:
                 scalar = validate_scalar_field(field)
                 scalar_result = scalar
@@ -57,8 +60,8 @@ class RenderEngine:
                     rgba = layer.color_ramp.apply(scalar)
             else:
                 rgba = validate_rgba_field(field)
-            composite = composite_rgba(composite, rgba, layer.opacity, layer.blend_mode)
-        return RenderResult(scalar_result, validate_rgba_field(composite))
+            composite = composite_rgba(composite, rgba, layer.opacity, layer.blend_mode, mask)
+        return RenderResult(scalar_result, validate_rgba_field(composite), mask_fields)
 
 
 def composite_rgba(
@@ -66,6 +69,7 @@ def composite_rgba(
     source: RGBAField,
     opacity: float,
     blend_mode: str = "normal",
+    mask: ScalarField | None = None,
 ) -> RGBAField:
     """Composite straight-alpha float32 RGBA with the W3C source-over blend equation."""
     base = validate_rgba_field(backdrop)
@@ -80,6 +84,11 @@ def composite_rgba(
     cs = top[..., :3]
     ab = base[..., 3:4]
     alpha = top[..., 3:4] * np.float32(opacity)
+    if mask is not None:
+        mask_field = validate_scalar_field(mask, name="layer mask")
+        if mask_field.shape != base.shape[:2]:
+            raise ValueError("Layer mask dimensions must match the composite")
+        alpha = alpha * np.clip(mask_field, 0.0, 1.0)[..., None]
     if blend_mode == "normal":
         blend = cs
     elif blend_mode == "multiply":

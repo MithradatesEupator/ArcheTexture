@@ -26,7 +26,12 @@ from PySide6.QtWidgets import (
 from archetexture.color.ramp import ColorRamp
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
-from archetexture.core.parameters import ControlFieldBinding
+from archetexture.core.parameters import (
+    ControlFieldBinding,
+    ControlFieldMapping,
+    ParameterSpec,
+    ParameterType,
+)
 from archetexture.core.pipeline_types import pipeline_output_type, valid_transform_chain
 from archetexture.core.recipe import (
     ControlFieldRecipe,
@@ -70,6 +75,7 @@ class MainWindow(QMainWindow):
         self._selected_control_field_id: str | None = None
         self._closing = False
         self._export_status_text: str | None = None
+        self._latest_render_result = None
         self._export_bridge = _ExportBridge(self)
         self.export_coordinator = ExportCoordinator(on_complete=self._export_bridge.completed.emit)
         self._export_bridge.completed.connect(
@@ -120,6 +126,10 @@ class MainWindow(QMainWindow):
         self.layers_panel.moved.connect(self._layer_moved)
         self.layers_panel.opacityChanged.connect(self._layer_opacity_changed)
         self.layers_panel.blendModeChanged.connect(self._layer_blend_changed)
+        self.layers_panel.maskChanged.connect(self._layer_mask_changed)
+        self.layers_panel.maskEditRequested.connect(self._edit_layer_mask)
+        self.layers_panel.addMaskRequested.connect(self._add_layer_mask)
+        self.layers_panel.maskNavigateRequested.connect(self._navigate_to_layer_mask)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
@@ -134,6 +144,7 @@ class MainWindow(QMainWindow):
             ("Single", "single"),
             ("Tile 3×3", "tile_3x3"),
             ("Seam Check", "seam_check"),
+            ("Mask Preview", "mask_preview"),
         ):
             self.viewport_mode_combo.addItem(label, mode)
         saved_view_mode = self._theme_settings().value("viewport/mode", "single")
@@ -317,6 +328,14 @@ class MainWindow(QMainWindow):
         ):
             self._selected_instance_id = layer.source.instance_id if layer.source else None
         self.layers_panel.set_recipe(recipe, self._selected_layer_id)
+        mask_index = self.viewport_mode_combo.findData("mask_preview")
+        if mask_index >= 0:
+            masked = layer.mask is not None
+            self.viewport_mode_combo.model().item(mask_index).setEnabled(masked)
+            if not masked and self.viewport_mode_combo.currentData() == "mask_preview":
+                self.viewport_mode_combo.setCurrentIndex(
+                    self.viewport_mode_combo.findData("single")
+                )
         self.pipeline_panel.set_recipe(recipe, self._selected_instance_id, layer)
         self.property_editor.set_control_fields(recipe.control_fields)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
@@ -404,6 +423,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Render failed")
             return
         self.viewport.set_result(outcome.result)
+        self._latest_render_result = outcome.result
+        self.viewport.set_mask_preview(
+            (outcome.result.mask_fields or {}).get(self._selected_layer_id)
+        )
         self.statusBar().showMessage(self._export_status_text or "Ready", 3000)
 
     def export_png(self, *_args) -> bool:
@@ -623,6 +646,10 @@ class MainWindow(QMainWindow):
         layer = self._layer()
         self._selected_instance_id = layer.source.instance_id
         self._refresh_document(request_render=False, reset_ramp_selection=True)
+        if self._latest_render_result is not None:
+            self.viewport.set_mask_preview(
+                (self._latest_render_result.mask_fields or {}).get(layer_id)
+            )
 
     def _add_layer(self) -> None:
         recipe = self.document.recipe
@@ -723,6 +750,73 @@ class MainWindow(QMainWindow):
             layer.blend_mode = mode
             self._commit_recipe(recipe)
 
+    def _layer_mask_changed(self, layer_id: str, source_id: str | None) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is None:
+            return
+        if source_id is None:
+            layer.mask = None
+        else:
+            old = layer.mask
+            mapping = (
+                old.mapping
+                if old is not None and old.source_id == source_id
+                else ControlFieldMapping()
+            )
+            layer.mask = ControlFieldBinding(str(source_id), mapping)
+        self._commit_recipe(recipe)
+
+    def _edit_layer_mask(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is None or layer.mask is None:
+            return
+        spec = ParameterSpec("mask", "Layer mask", ParameterType.PERCENT, 1.0, 0.0, 1.0)
+        dialog = BindingDialog(recipe.control_fields, spec, layer.mask, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        layer.mask = dialog.binding
+        self._commit_recipe(recipe)
+
+    def _navigate_to_layer_mask(self, layer_id: str) -> None:
+        layer = next(
+            (item for item in self.document.recipe.layers if item.layer_id == layer_id), None
+        )
+        if layer is None or layer.mask is None:
+            return
+        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self.control_fields_editor.select_field(layer.mask.source_id)
+        self._selected_control_field_id = layer.mask.source_id
+
+    def _add_layer_mask(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is None:
+            return
+        stem = re.sub(r"[^A-Za-z0-9]+", "-", layer.name).strip("-").lower() or layer_id
+        if not stem[0].isalpha():
+            stem = f"layer-{stem}"
+        identifier = f"{stem}-mask"
+        base = identifier
+        suffix = 2
+        while identifier in recipe.control_fields:
+            identifier = f"{base}-{suffix}"
+            suffix += 1
+        definition = REGISTRY.get("generator.radial_gradient")
+        recipe.control_fields[identifier] = ControlFieldRecipe(
+            source=OperationInstance(
+                f"{identifier}-source",
+                definition.identifier,
+                definition.version,
+                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+            )
+        )
+        layer.mask = ControlFieldBinding(identifier)
+        self._selected_control_field_id = identifier
+        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self._commit_recipe(recipe, control_field_id=identifier)
+
     def _control_field_selected(self, identifier: str) -> None:
         self._selected_control_field_id = identifier
 
@@ -801,6 +895,9 @@ class MainWindow(QMainWindow):
         for instance in instances:
             if instance is not None:
                 self._rewrite_instance_bindings(instance, old_id, new_id)
+        for layer in recipe.layers:
+            if layer.mask is not None:
+                layer.mask = self._rewrite_binding_value(layer.mask, old_id, new_id)
         self._commit_recipe(recipe, control_field_id=new_id)
 
     @staticmethod
@@ -815,6 +912,9 @@ class MainWindow(QMainWindow):
                 yield from MainWindow._iter_control_bindings(item, f"{path}[{index}]")
 
     def _first_control_reference(self, recipe: ProjectRecipe, identifier: str) -> str | None:
+        for layer in recipe.layers:
+            if layer.mask is not None and layer.mask.source_id == identifier:
+                return f"{layer.name} mask"
         instances = []
         for layer in recipe.layers:
             label = "main source" if len(recipe.layers) == 1 else f"{layer.name} source"

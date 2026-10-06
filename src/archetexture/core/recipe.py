@@ -37,13 +37,14 @@ class LayerRecipe:
     enabled: bool = True
     opacity: float = 1.0
     blend_mode: str = "normal"
+    mask: ControlFieldBinding | None = None
 
 
 @dataclass(init=False)
 class ProjectRecipe:
-    """Canonical schema-v2 document, with temporary v1-shaped accessors for callers."""
+    """Canonical schema-v3 document, with temporary v1-shaped accessors for callers."""
 
-    schema_version: int = 2
+    schema_version: int = 3
     width: int = 256
     height: int = 256
     seed: int = 0
@@ -52,7 +53,7 @@ class ProjectRecipe:
 
     def __init__(
         self,
-        schema_version: int = 2,
+        schema_version: int = 3,
         width: int = 256,
         height: int = 256,
         seed: int = 0,

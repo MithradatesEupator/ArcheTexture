@@ -268,8 +268,8 @@ def validate_recipe(
         return [ValidationIssue("recipe", "must be a ProjectRecipe")]
     if not isinstance(recipe.schema_version, int) or isinstance(recipe.schema_version, bool):
         issues.append(ValidationIssue("schema_version", "must be an integer"))
-    elif recipe.schema_version != 2:
-        issues.append(ValidationIssue("schema_version", "supported schema version is 2"))
+    elif recipe.schema_version != 3:
+        issues.append(ValidationIssue("schema_version", "supported schema version is 3"))
     for name in ("width", "height"):
         value = getattr(recipe, name)
         if (
@@ -326,6 +326,37 @@ def validate_recipe(
             "add",
         }:
             issues.append(ValidationIssue(f"{path}.blend_mode", "unsupported blend mode"))
+        if layer.mask is not None:
+            if not isinstance(layer.mask, ControlFieldBinding):
+                issues.append(
+                    ValidationIssue(f"{path}.mask", "must be a ControlFieldBinding or None")
+                )
+            else:
+                if (
+                    not isinstance(layer.mask.source_id, str)
+                    or layer.mask.source_id not in control_ids
+                ):
+                    issues.append(
+                        ValidationIssue(
+                            f"{path}.mask", f"unknown control field: {layer.mask.source_id!r}"
+                        )
+                    )
+                if not isinstance(layer.mask.mapping, ControlFieldMapping):
+                    issues.append(
+                        ValidationIssue(f"{path}.mask.mapping", "must be a ControlFieldMapping")
+                    )
+                else:
+                    _validate_mapping(layer.mask.mapping, f"{path}.mask.mapping", issues)
+                    if any(
+                        not 0.0 <= bound <= 1.0
+                        for bound in (layer.mask.mapping.output_min, layer.mask.mapping.output_max)
+                        if _finite_number(bound)
+                    ):
+                        issues.append(
+                            ValidationIssue(
+                                f"{path}.mask.mapping", "mask mapping bounds must be normalized"
+                            )
+                        )
         if layer.source is None:
             issues.append(ValidationIssue(f"{path}.source", "a source generator is required"))
             previous_type = None
@@ -458,7 +489,7 @@ def validate_recipe(
                 issues.append(ValidationIssue(f"{path}.mapping", "must be a ControlFieldMapping"))
             else:
                 _validate_mapping(control.mapping, f"{path}.mapping", issues)
-                for bound in control.mapping.normalized_range():
+                for bound in (control.mapping.output_min, control.mapping.output_max):
                     if _finite_number(bound) and not 0.0 <= bound <= 1.0:
                         issues.append(
                             ValidationIssue(

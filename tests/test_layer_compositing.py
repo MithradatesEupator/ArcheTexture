@@ -113,7 +113,7 @@ def test_multilayer_v2_round_trip_preserves_bindings_and_render(tmp_path):
     path = tmp_path / "stack.archetexture"
     save_project(recipe, path)
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert len(payload["layers"]) == 2
     assert "source" not in payload
     restored = load_project(path)
@@ -158,7 +158,7 @@ def test_v1_migration_creates_one_equivalent_layer_and_preserves_controls():
         },
     }
     migrated = migrate_recipe(legacy)
-    assert migrated.schema_version == 2
+    assert migrated.schema_version == 3
     assert len(migrated.layers) == 1
     assert migrated.layers[0].layer_id == "layer-1"
     assert migrated.control_fields.keys() == {"mask"}

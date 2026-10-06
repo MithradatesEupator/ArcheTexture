@@ -34,6 +34,10 @@ class LayersPanel(QWidget):
     moved = Signal(str, int)
     opacityChanged = Signal(str, float)
     blendModeChanged = Signal(str, str)
+    maskChanged = Signal(str, object)
+    maskEditRequested = Signal(str)
+    addMaskRequested = Signal(str)
+    maskNavigateRequested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +86,30 @@ class LayersPanel(QWidget):
         self.down_button.clicked.connect(lambda: self._move(1))
         self.opacity.valueChanged.connect(self._opacity_changed)
         self.blend.currentIndexChanged.connect(self._blend_changed)
+        self.mask_combo = QComboBox(self)
+        self.mask_combo.setObjectName("layer-mask-control")
+        self.mask_combo.addItem("No mask", None)
+        self.mask_combo.currentIndexChanged.connect(self._mask_changed)
+        layout.addWidget(QLabel("LAYER MASK"))
+        layout.addWidget(self.mask_combo)
+        mask_buttons = QVBoxLayout()
+        mask_actions = QHBoxLayout()
+        mask_edit = QHBoxLayout()
+        self.add_mask_button = QPushButton("Add Mask")
+        self.edit_mask_button = QPushButton("Edit Mapping")
+        self.open_mask_button = QPushButton("Open Field")
+        self.clear_mask_button = QPushButton("Clear")
+        mask_actions.addWidget(self.add_mask_button)
+        mask_actions.addWidget(self.clear_mask_button)
+        mask_edit.addWidget(self.edit_mask_button)
+        mask_edit.addWidget(self.open_mask_button)
+        mask_buttons.addLayout(mask_actions)
+        mask_buttons.addLayout(mask_edit)
+        layout.addLayout(mask_buttons)
+        self.add_mask_button.clicked.connect(self._add_mask)
+        self.edit_mask_button.clicked.connect(self._edit_mask)
+        self.open_mask_button.clicked.connect(self._open_mask)
+        self.clear_mask_button.clicked.connect(lambda: self._set_mask(None))
         self.setMinimumWidth(230)
 
     def set_recipe(self, recipe: ProjectRecipe, selected_id: str | None) -> None:
@@ -109,6 +137,21 @@ class LayersPanel(QWidget):
         if layer:
             self.opacity.setValue(layer.opacity)
             self.blend.setCurrentIndex(max(0, self.blend.findData(layer.blend_mode)))
+        self.mask_combo.blockSignals(True)
+        self.mask_combo.clear()
+        self.mask_combo.addItem("No mask", None)
+        for identifier in recipe.control_fields:
+            self.mask_combo.addItem(identifier, identifier)
+        if layer is not None and layer.mask is not None:
+            mask_index = self.mask_combo.findData(layer.mask.source_id)
+            if mask_index >= 0:
+                self.mask_combo.setCurrentIndex(mask_index)
+        self.mask_combo.blockSignals(False)
+        self.mask_combo.setEnabled(layer is not None and bool(recipe.control_fields))
+        self.add_mask_button.setEnabled(layer is not None)
+        self.edit_mask_button.setEnabled(layer is not None and layer.mask is not None)
+        self.open_mask_button.setEnabled(layer is not None and layer.mask is not None)
+        self.clear_mask_button.setEnabled(layer is not None and layer.mask is not None)
         self.layer_list.blockSignals(False)
         self._syncing = False
         row = self.layer_list.currentRow()
@@ -162,3 +205,27 @@ class LayersPanel(QWidget):
         identifier = self._selected_id()
         if not self._syncing and identifier:
             self.blendModeChanged.emit(identifier, str(self.blend.currentData()))
+
+    def _set_mask(self, source_id: str | None) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.maskChanged.emit(identifier, source_id)
+
+    def _mask_changed(self, _index: int) -> None:
+        if not self._syncing:
+            self._set_mask(self.mask_combo.currentData())
+
+    def _add_mask(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.addMaskRequested.emit(identifier)
+
+    def _edit_mask(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.maskEditRequested.emit(identifier)
+
+    def _open_mask(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.maskNavigateRequested.emit(identifier)
