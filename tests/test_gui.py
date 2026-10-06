@@ -297,7 +297,7 @@ def test_new_document_discards_only_after_explicit_confirmation(workbench, qtbot
     assert workbench.document.dirty
     assert workbench.new_document()
     recipe = workbench.document.recipe
-    assert recipe.source.operation_id == "generator.white_noise"
+    assert recipe.source.operation_id == "generator.fractal_noise"
     assert not workbench.document.dirty
     qtbot.waitUntil(
         lambda: (

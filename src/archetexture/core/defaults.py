@@ -11,32 +11,63 @@ def default_recipe() -> ProjectRecipe:
         seed=31,
         layers=[
             LayerRecipe(
-                "layer-noise",
+                "layer-fractal",
                 "Layer 1",
                 OperationInstance(
-                    "source-noise", "generator.white_noise", 1, parameters={"seed": 71}
+                    "source-fractal",
+                    "generator.fractal_noise",
+                    1,
+                    parameters={
+                        "seed": 23,
+                        "scale": 3.5,
+                        "octaves": 5,
+                        "lacunarity": 2.0,
+                        "persistence": 0.5,
+                        "offset_x": 0.0,
+                        "offset_y": 0.0,
+                    },
                 ),
+                transforms=[
+                    OperationInstance(
+                        "fractal-levels",
+                        "transform.levels",
+                        1,
+                        parameters={
+                            "input_black": 0.12,
+                            "input_white": 0.88,
+                            "gamma": 0.9,
+                            "output_black": 0.0,
+                            "output_white": 1.0,
+                        },
+                    ),
+                    OperationInstance(
+                        "fractal-blur",
+                        "transform.blur",
+                        1,
+                        parameters={"sigma": 0.6},
+                    ),
+                ],
                 color_ramp=ColorRamp(
                     (
-                        ColorStop(0.0, (0.0, 0.0, 0.0, 1.0)),
-                        ColorStop(0.5, (0.5, 0.5, 0.5, 1.0)),
-                        ColorStop(1.0, (1.0, 1.0, 1.0, 1.0)),
+                        ColorStop(0.0, (0.025, 0.018, 0.012, 1.0)),
+                        ColorStop(0.48, (0.24, 0.14, 0.075, 1.0)),
+                        ColorStop(1.0, (0.84, 0.69, 0.43, 1.0)),
                     )
                 ),
             ),
             LayerRecipe(
-                "layer-gradient",
+                "layer-cellular",
                 "Layer 2",
                 OperationInstance(
-                    "source-gradient",
-                    "generator.linear_gradient",
+                    "source-cellular",
+                    "generator.cellular",
                     1,
-                    parameters={"angle": 0.0},
+                    parameters={"seed": 61, "scale": 8.0, "jitter": 0.8, "distance_mode": "edge"},
                 ),
                 color_ramp=ColorRamp(
                     (
-                        ColorStop(0.0, (0.18, 0.05, 0.28, 0.0)),
-                        ColorStop(1.0, (0.94, 0.57, 0.18, 0.65)),
+                        ColorStop(0.0, (0.10, 0.065, 0.035, 0.0)),
+                        ColorStop(1.0, (0.95, 0.77, 0.48, 0.4)),
                     )
                 ),
                 opacity=0.3,

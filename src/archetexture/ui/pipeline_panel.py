@@ -38,8 +38,11 @@ class PipelinePanel(QWidget):
             for definition in REGISTRY.definitions.values()
             if definition.operation_type == OperationType.GENERATOR
         ]
+        self._generators.sort(key=lambda definition: (definition.category, definition.name))
         for definition in self._generators:
-            self.source_selector.addItem(definition.name, definition.identifier)
+            self.source_selector.addItem(
+                f"{definition.category} / {definition.name}", definition.identifier
+            )
         self.source_selector.currentIndexChanged.connect(self._source_selected)
         layout.addWidget(self.source_selector)
 
@@ -55,8 +58,11 @@ class PipelinePanel(QWidget):
             for definition in REGISTRY.definitions.values()
             if definition.operation_type == OperationType.TRANSFORM
         ]
+        self._transforms.sort(key=lambda definition: (definition.category, definition.name))
         for definition in self._transforms:
-            self.transform_selector.addItem(definition.name, definition.identifier)
+            self.transform_selector.addItem(
+                f"{definition.category} / {definition.name}", definition.identifier
+            )
         layout.addWidget(self.transform_selector)
 
         controls = QHBoxLayout()
