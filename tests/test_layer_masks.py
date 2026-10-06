@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.document import DocumentController
 from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
 from archetexture.core.recipe import (
     ControlFieldRecipe,
@@ -17,9 +18,10 @@ from archetexture.core.seamlessness import recipe_seamlessness
 from archetexture.core.serialization import load_project, migrate_recipe, save_project
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.image_export import ImageExporter
-from archetexture.render.engine import RenderEngine, composite_rgba
+from archetexture.render.engine import RenderEngine, RenderResult, composite_rgba
 from archetexture.render.pixels import rgba_float_to_uint8
 from archetexture.ui.main_window import MainWindow
+from archetexture.ui.viewport import TextureViewport
 
 
 def instance(op_id: str, name: str, **params) -> OperationInstance:
@@ -79,6 +81,13 @@ def test_mask_zero_one_intermediate_and_opacity_multiply():
     )
     np.testing.assert_allclose(full[0, 0], (1, 0, 0, 1))
     np.testing.assert_allclose(partial[0, 0], (0.2, 0, 0.8, 1))
+
+
+def test_source_alpha_is_multiplied_by_opacity_and_mask():
+    base = np.array([[[0.0, 0.0, 1.0, 1.0]]], dtype=np.float32)
+    top = np.array([[[1.0, 0.0, 0.0, 0.6]]], dtype=np.float32)
+    result = composite_rgba(base, top, 0.5, mask=np.array([[0.5]], dtype=np.float32))
+    np.testing.assert_allclose(result[0, 0], (0.15, 0.0, 0.85, 1.0))
 
 
 def test_mask_binding_invert_mapping_and_quantization_are_applied():
@@ -141,6 +150,22 @@ def test_masked_render_export_and_schema3_round_trip_are_equal(tmp_path):
 
     with Image.open(png) as exported:
         np.testing.assert_array_equal(np.asarray(exported), rgba_float_to_uint8(rendered))
+
+
+def test_mask_mapping_change_is_undoable_and_redoable():
+    document = DocumentController(masked_recipe(0.5))
+    initial = document.recipe.layers[1].mask
+    edited = document.recipe
+    edited.layers[1].mask = ControlFieldBinding(
+        "mask", ControlFieldMapping(output_min=0.2, output_max=0.8, invert=True)
+    )
+    document.commit(edited)
+    changed = document.recipe.layers[1].mask
+    assert changed != initial
+    document.undo()
+    assert document.recipe.layers[1].mask == initial
+    document.redo()
+    assert document.recipe.layers[1].mask == changed
 
 
 def test_schema1_and_schema2_migrate_to_canonical_schema3_without_masks():
@@ -278,3 +303,18 @@ def test_control_field_rename_updates_mask_and_referenced_delete_is_blocked(qtbo
     window.redo()
     assert window._layer().mask.source_id == renamed_id
     window.close()
+
+
+def test_mask_preview_is_grayscale_presentation_only(qtbot):
+    rgba = np.full((2, 3, 4), (0.2, 0.4, 0.8, 1.0), dtype=np.float32)
+    mask = np.array([[0.0, 0.5, 1.0], [1.0, 0.5, 0.0]], dtype=np.float32)
+    result = RenderResult(None, rgba.copy(), {"layer": mask.copy()})
+    viewport = TextureViewport()
+    qtbot.addWidget(viewport)
+    viewport.set_result(result)
+    rendered_before = viewport.rendered_field.copy()
+    viewport.set_mask_preview(result.mask_fields["layer"])
+    viewport.set_display_mode("mask_preview")
+    assert viewport._presentation_pixmap.cacheKey() == viewport._mask_pixmap.cacheKey()
+    np.testing.assert_array_equal(viewport.rendered_field, rendered_before)
+    assert not np.array_equal(viewport.rendered_field, mask)
