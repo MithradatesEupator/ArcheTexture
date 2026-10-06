@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QActionGroup
+from PySide6.QtGui import QActionGroup, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSplitter,
+    QStyleFactory,
     QTabWidget,
     QToolBar,
     QVBoxLayout,
@@ -227,7 +228,15 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def _configure_theme(self) -> None:
-        self._system_palette = self._application.style().standardPalette()
+        if not hasattr(self._application, "_archetexture_system_style_name"):
+            self._application._archetexture_system_style_name = (
+                self._application.style().objectName()
+            )
+            self._application._archetexture_system_palette = QPalette(
+                self._application.style().standardPalette()
+            )
+        self._system_style_name = self._application._archetexture_system_style_name
+        self._system_palette = QPalette(self._application._archetexture_system_palette)
         settings = self._theme_settings()
         mode = settings.value("appearance/theme", "dark")
         self._set_theme(mode if mode in {"system", "light", "dark"} else "dark", persist=False)
@@ -235,7 +244,16 @@ class MainWindow(QMainWindow):
     def _set_theme(self, mode: str, *, persist: bool = True) -> None:
         if mode not in {"system", "light", "dark"}:
             mode = "dark"
-        self._application.setPalette(palette_for_mode(mode, self._system_palette))
+        if mode == "system":
+            system_style = QStyleFactory.create(self._system_style_name)
+            if system_style is not None:
+                self._application.setStyle(system_style)
+            self._application.setPalette(self._system_palette)
+        else:
+            fusion_style = QStyleFactory.create("Fusion")
+            if fusion_style is not None:
+                self._application.setStyle(fusion_style)
+            self._application.setPalette(palette_for_mode(mode, self._system_palette))
         self._application.setStyleSheet(theme_stylesheet(mode))
         if hasattr(self, "theme_actions"):
             self.theme_actions[mode].setChecked(True)

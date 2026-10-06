@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
@@ -43,11 +43,15 @@ class PropertyEditor(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("property-editor")
         self._form = QFormLayout()
         self._control_fields: dict = {}
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
-        self._heading.setStyleSheet("font-weight: 600; font-size: 15px")
+        heading_font = QFont(self._heading.font())
+        heading_font.setWeight(QFont.Weight.DemiBold)
+        heading_font.setPointSize(15)
+        self._heading.setFont(heading_font)
         self._layout.addWidget(self._heading)
         self._layout.addLayout(self._form)
         self._layout.addStretch(1)

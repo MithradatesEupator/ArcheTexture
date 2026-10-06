@@ -38,6 +38,7 @@ class ControlFieldsEditor(QWidget):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
+        self.setObjectName("control-fields-editor")
         self._recipe = ProjectRecipe()
         self._selected_id: str | None = None
         self._selected_operation_id: str | None = None

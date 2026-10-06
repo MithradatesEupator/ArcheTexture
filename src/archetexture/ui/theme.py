@@ -90,28 +90,75 @@ def palette_for_mode(mode: str, system_palette: QPalette) -> QPalette:
 
 
 def theme_stylesheet(mode: str) -> str:
-    """Small centralized styling for controls that do not consistently follow QPalette."""
+    """Return centralized surface and control styling for explicit themes."""
     if mode == "system":
         return ""
     if mode == "dark":
-        border = "#3d424a"
-        hover = "#3a4048"
+        window, base, alternate = "#1b1d21", "#191b1f", "#22262b"
+        button, raised, border = "#30343a", "#292c31", "#3d424a"
+        text, muted, highlight, highlighted = "#e7e9ec", "#a3a8b0", "#426f9f", "#ffffff"
+        hover, pressed = "#3a4048", "#343a42"
     else:
-        border = "#c5c9cf"
-        hover = "#e4eaf1"
+        window, base, alternate = "#f0f1f3", "#ffffff", "#f5f6f8"
+        button, raised, border = "#f3f4f6", "#e9ebee", "#c5c9cf"
+        text, muted, highlight, highlighted = "#202328", "#747982", "#3978b8", "#ffffff"
+        hover, pressed = "#e4eaf1", "#d5e1ef"
     return f"""
-        QMenu {{ border: 1px solid {border}; }}
-        QMenu::item:selected {{
-            background-color: palette(highlight);
-            color: palette(highlighted-text);
+        QWidget {{ color: {text}; }}
+        QMainWindow, QDialog, QTabWidget::pane {{ background: {window}; }}
+        QWidget#property-editor, QWidget#control-fields-editor,
+        QWidget#control-operation-properties {{ background: {window}; }}
+        QMenuBar, QToolBar, QStatusBar {{ background: {window}; color: {text}; }}
+        QToolBar {{ border: 0; spacing: 4px; padding: 3px; }}
+        QStatusBar::item {{ border: 0; }}
+        QTabWidget::pane {{ border: 1px solid {border}; top: -1px; }}
+        QTabBar {{ background: {window}; }}
+        QTabBar::tab {{
+            background: {raised}; color: {text}; border: 1px solid {border};
+            padding: 6px 10px; margin-right: 2px;
         }}
-        QToolTip {{ padding: 4px; border: 1px solid {border}; }}
-        QSplitter::handle {{ background-color: palette(mid); }}
-        QScrollBar:vertical {{ width: 12px; margin: 0; background: palette(window); }}
-        QScrollBar:horizontal {{ height: 12px; margin: 0; background: palette(window); }}
+        QTabBar::tab:selected {{ background: {window}; border-bottom-color: {window}; }}
+        QTabBar::tab:hover:!selected {{ background: {hover}; }}
+        QTabBar::tab:disabled {{ background: {window}; color: {muted}; }}
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
+        QAbstractItemView, QListWidget, QListView, QTreeWidget, QTreeView {{
+            background: {base}; alternate-background-color: {alternate}; color: {text};
+            border: 1px solid {border}; selection-background-color: {highlight};
+            selection-color: {highlighted};
+        }}
+        QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+        QComboBox:disabled, QAbstractItemView:disabled, QListWidget:disabled,
+        QListView:disabled, QTreeWidget:disabled, QTreeView:disabled {{
+            background: {base}; color: {muted}; border-color: {border};
+        }}
+        QComboBox::drop-down {{
+            background: {raised}; border-left: 1px solid {border}; width: 20px;
+        }}
+        QComboBox QAbstractItemView {{ background: {base}; border: 1px solid {border}; }}
+        QPushButton, QToolButton {{
+            background: {button}; color: {text}; border: 1px solid {border};
+            padding: 4px 8px;
+        }}
+        QPushButton:hover, QToolButton:hover {{ background: {hover}; }}
+        QPushButton:pressed, QToolButton:pressed {{ background: {pressed}; }}
+        QPushButton:disabled, QToolButton:disabled {{
+            background: {raised}; color: {muted}; border-color: {border};
+        }}
+        QCheckBox:disabled {{ color: {muted}; }}
+        QMenuBar::item {{ background: transparent; color: {text}; padding: 4px 8px; }}
+        QMenuBar::item:selected, QMenuBar::item:pressed {{ background: {raised}; }}
+        QMenu {{ background: {window}; color: {text}; border: 1px solid {border}; }}
+        QMenu::item {{ padding: 4px 24px 4px 20px; }}
+        QMenu::item:selected {{ background: {highlight}; color: {highlighted}; }}
+        QMenu::item:disabled {{ color: {muted}; background: transparent; }}
+        QToolTip {{
+            background: {raised}; color: {text}; padding: 4px; border: 1px solid {border};
+        }}
+        QSplitter::handle {{ background: {border}; }}
+        QScrollBar:vertical {{ width: 12px; margin: 0; background: {window}; }}
+        QScrollBar:horizontal {{ height: 12px; margin: 0; background: {window}; }}
         QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
-            min-width: 20px; min-height: 20px; border-radius: 4px;
-            background: palette(mid);
+            min-width: 20px; min-height: 20px; border-radius: 4px; background: {border};
         }}
         QScrollBar::handle:hover {{ background: {hover}; }}
         QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
