@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.defaults import default_recipe
 from archetexture.core.document import DocumentController
 from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
 from archetexture.core.recipe import (
@@ -113,6 +114,29 @@ def test_linear_gradient_mask_varies_spatial_contribution_and_inversion_reverses
     recipe.layers[1].mask = ControlFieldBinding("mask", ControlFieldMapping(invert=True))
     inverted = RenderEngine().render(recipe)
     assert np.corrcoef(left_to_right, inverted.rgba_field[values.shape[0] // 2, :, 0])[0, 1] < -0.95
+
+
+def test_fractal_noise_and_cellular_layers_blend_spatially_through_gradient_mask():
+    recipe = default_recipe()
+    recipe.width = 64
+    recipe.height = 40
+    recipe.layers[1].color_ramp = ColorRamp(
+        (ColorStop(0, (1, 0, 0, 1)), ColorStop(1, (1, 0, 0, 1)))
+    )
+    recipe.layers[1].mask = ControlFieldBinding("spatial-mask")
+    recipe.control_fields["spatial-mask"] = ControlFieldRecipe(
+        instance("generator.linear_gradient", "spatial-mask-source", angle=0.0)
+    )
+    masked = RenderEngine().render(recipe)
+    recipe.layers[1].enabled = False
+    base_only = RenderEngine().render(recipe).rgba_field
+    row = recipe.height // 2
+    mask = masked.mask_fields[recipe.layers[1].layer_id][row]
+    contribution = np.linalg.norm(masked.rgba_field[row, :, :3] - base_only[row, :, :3], axis=1)
+    assert masked.mask_fields[recipe.layers[1].layer_id].min() == 0.0
+    assert masked.mask_fields[recipe.layers[1].layer_id].max() == 1.0
+    assert contribution[-1] > contribution[0]
+    assert mask[-1] > mask[0]
 
 
 def test_height_to_normal_rgba_output_is_masked_without_modifying_rgb_field():
