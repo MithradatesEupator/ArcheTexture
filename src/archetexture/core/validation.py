@@ -12,6 +12,7 @@ from archetexture.core.parameters import (
     ParameterSpec,
     ParameterType,
 )
+from archetexture.core.pipeline_types import accepts_input
 from archetexture.core.recipe import (
     ControlFieldRecipe,
     LayerRecipe,
@@ -352,14 +353,15 @@ def validate_recipe(
                     definition = registry.get(instance.operation_id)
                 except (KeyError, TypeError):
                     definition = None
-                if definition is not None and previous_type not in definition.input_types:
+                if definition is not None and not accepts_input(definition, previous_type):
                     issues.append(
                         ValidationIssue(
                             item_path,
                             f"cannot accept the preceding {previous_type or 'unknown'} field type",
                         )
                     )
-            previous_type = current_type
+            if isinstance(instance, OperationInstance) and instance.enabled:
+                previous_type = current_type
         ramp = layer.color_ramp
         if ramp is not None:
             ramp_path = f"{path}.color_ramp"
@@ -443,11 +445,12 @@ def validate_recipe(
                     definition = registry.get(item.operation_id)
                 except (KeyError, TypeError):
                     definition = None
-                if definition is not None and control_type not in definition.input_types:
+                if definition is not None and not accepts_input(definition, control_type):
                     issues.append(
                         ValidationIssue(item_path, "cannot accept the preceding control field")
                     )
-            control_type = current_type
+            if isinstance(item, OperationInstance) and item.enabled:
+                control_type = current_type
         if control_type not in {None, "scalar"}:
             issues.append(ValidationIssue(path, "control fields must produce scalar output"))
         if control.mapping is not None:

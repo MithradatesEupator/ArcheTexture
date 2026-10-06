@@ -65,6 +65,20 @@ only after a complete image is ready. PNG is the only image export format. No
 gamma conversion or color profile management is applied. Dimensions above
 4096 pixels produce a warning in the export dialog.
 
+## Height to Normal
+
+Append the **Height to Normal** output transform after a scalar source and any
+scalar transforms to generate a tangent-space RGBA normal map. Strength scales
+the height slope per normalized texture coordinate, so its normal directions
+stay consistent when render resolution changes. OpenGL encodes increasing
+image-row height toward positive Y (green above 0.5); DirectX flips only that
+green direction. Wrap samples opposite edges and preserves a proven periodic
+input; Clamp replicates edge samples and cannot guarantee a seamless result.
+Remove a layer's color ramp before adding Height to Normal, because ramps
+operate on scalar output. Normal-map layers use the existing generic layer
+blend modes as visual color compositing; those modes are not physically correct
+normal-vector blending. Export remains ordinary RGBA PNG.
+
 ## Run the application
 
 Use Python 3.12 or later:

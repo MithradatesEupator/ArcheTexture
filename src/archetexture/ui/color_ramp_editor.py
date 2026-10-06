@@ -213,6 +213,7 @@ class ColorRampEditor(QWidget):
         self._ramp: ColorRamp | None = None
         self._selected_key: tuple[float, tuple[float, float, float, float]] | None = None
         self._selection_restore_key: tuple[float, tuple[float, float, float, float]] | None = None
+        self._applicable = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 5)
@@ -241,6 +242,14 @@ class ColorRampEditor(QWidget):
             button.setMinimumHeight(25)
             actions.addWidget(button)
         layout.addLayout(actions)
+
+        self.inapplicable_label = QLabel(
+            "Color ramps apply to scalar output; remove the ramp before converting "
+            "this layer to a normal map."
+        )
+        self.inapplicable_label.setObjectName("color-ramp-inapplicable")
+        self.inapplicable_label.setWordWrap(True)
+        layout.addWidget(self.inapplicable_label)
 
         self.preview = RampPreview(self)
         self.preview.stopSelected.connect(self._select_index)
@@ -307,11 +316,18 @@ class ColorRampEditor(QWidget):
             None,
         )
 
-    def set_ramp(self, ramp: ColorRamp | None, *, reset_selection: bool = False) -> None:
+    def set_ramp(
+        self,
+        ramp: ColorRamp | None,
+        *,
+        reset_selection: bool = False,
+        applicable: bool = True,
+    ) -> None:
         if reset_selection:
             self._selection_restore_key = None
         old_key = None if reset_selection else self._selected_key
         self._ramp = ramp
+        self._applicable = applicable
         stops = self._stops()
         if not stops:
             self._selected_key = None
@@ -336,13 +352,16 @@ class ColorRampEditor(QWidget):
         stops = self._stops()
         selected = self.selected_stop
         has_ramp = self._ramp is not None
-        self.create_button.setVisible(not has_ramp)
-        self.add_button.setEnabled(has_ramp and self._largest_gap() is not None)
-        self.remove_stop_button.setEnabled(has_ramp and len(stops) > 1)
-        self.remove_ramp_button.setEnabled(has_ramp)
+        self.inapplicable_label.setVisible(not self._applicable)
+        self.create_button.setVisible(not has_ramp and self._applicable)
+        self.add_button.setEnabled(
+            has_ramp and self._applicable and self._largest_gap() is not None
+        )
+        self.remove_stop_button.setEnabled(has_ramp and self._applicable and len(stops) > 1)
+        self.remove_ramp_button.setEnabled(has_ramp and self._applicable)
         self.position_spin.blockSignals(True)
-        self.color_button.setEnabled(selected is not None)
-        self.position_spin.setEnabled(selected is not None)
+        self.color_button.setEnabled(selected is not None and self._applicable)
+        self.position_spin.setEnabled(selected is not None and self._applicable)
         if selected is None:
             self.position_spin.setRange(0.0, 1.0)
             self.position_spin.setValue(0.0)

@@ -61,6 +61,12 @@ def _layer_state(layer: LayerRecipe, registry: OperationDefinitionSet) -> bool |
             state = None
         elif definition.seamlessness == Seamlessness.PRESERVES:
             pass
+        elif (
+            definition.seamlessness == Seamlessness.WRAP_CAPABLE
+            and instance.operation_id == "transform.height_to_normal"
+        ):
+            if instance.parameters.get("edge_mode", "wrap") != "wrap":
+                state = None
         elif definition.seamlessness == Seamlessness.INHERENT:
             state = True
         elif definition.seamlessness == Seamlessness.BREAKS:

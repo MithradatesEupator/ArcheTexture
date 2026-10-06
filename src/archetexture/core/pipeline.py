@@ -137,8 +137,19 @@ def _run_instance(
 
 
 def _blend(previous: Field, transformed: Field, influence: float | np.ndarray) -> Field:
-    if previous.shape != transformed.shape:
+    if previous.shape[:2] != transformed.shape[:2]:
         raise ValueError("Transform output shape does not match its input")
+    if previous.ndim != transformed.ndim:
+        if previous.ndim == 2:
+            previous_rgba = np.empty((*previous.shape, 4), dtype=np.float32)
+            previous_rgba[..., :3] = previous[..., None]
+            previous_rgba[..., 3] = 1.0
+            previous = previous_rgba
+        else:
+            transformed_rgba = np.empty((*transformed.shape, 4), dtype=np.float32)
+            transformed_rgba[..., :3] = transformed[..., None]
+            transformed_rgba[..., 3] = 1.0
+            transformed = transformed_rgba
     alpha = np.asarray(influence, dtype=np.float32)
     if previous.ndim == 3 and alpha.ndim == 2:
         alpha = alpha[..., None]

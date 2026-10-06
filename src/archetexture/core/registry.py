@@ -919,6 +919,54 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             Seamlessness.PRESERVES,
             spatial_transforms.edge_detail,
         ),
+        OperationDefinition(
+            "transform.height_to_normal",
+            1,
+            "Height to Normal",
+            "Output",
+            "Converts scalar height into a tangent-space normal map.",
+            OperationType.TRANSFORM,
+            ("scalar",),
+            "rgba",
+            (
+                _spec(
+                    "strength",
+                    "Strength",
+                    ParameterType.FLOAT,
+                    1.0,
+                    0.01,
+                    20.0,
+                    0.05,
+                    description="Normal slope per normalized texture coordinate.",
+                ),
+                ParameterSpec(
+                    "convention",
+                    "Convention",
+                    ParameterType.ENUM,
+                    "opengl",
+                    description=(
+                        "OpenGL maps increasing image-row height to positive green; "
+                        "DirectX flips only the green channel."
+                    ),
+                    allows_modulation=False,
+                    options=("opengl", "directx"),
+                ),
+                ParameterSpec(
+                    "edge_mode",
+                    "Edge Mode",
+                    ParameterType.ENUM,
+                    "wrap",
+                    description=(
+                        "Wrap samples opposite edges; Clamp replicates border values and "
+                        "does not guarantee seamless output."
+                    ),
+                    allows_modulation=False,
+                    options=("wrap", "clamp"),
+                ),
+            ),
+            Seamlessness.WRAP_CAPABLE,
+            spatial_transforms.height_to_normal,
+        ),
     )
 
 

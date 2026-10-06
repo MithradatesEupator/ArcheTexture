@@ -27,6 +27,7 @@ from archetexture.color.ramp import ColorRamp
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ControlFieldBinding
+from archetexture.core.pipeline_types import pipeline_output_type, valid_transform_chain
 from archetexture.core.recipe import (
     ControlFieldRecipe,
     LayerRecipe,
@@ -323,6 +324,7 @@ class MainWindow(QMainWindow):
         self.color_ramp_editor.set_ramp(
             layer.color_ramp,
             reset_selection=reset_ramp_selection,
+            applicable=pipeline_output_type(layer.source, layer.transforms) == "scalar",
         )
         if refresh_properties:
             self._refresh_property_editor(recipe)
@@ -518,14 +520,19 @@ class MainWindow(QMainWindow):
         if definition.operation_type != OperationType.TRANSFORM:
             return
         instance_id = f"transform-{uuid.uuid4().hex[:12]}"
-        layer.transforms.append(
-            OperationInstance(
-                instance_id,
-                operation_id,
-                definition.version,
-                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
-            )
+        candidate = OperationInstance(
+            instance_id,
+            operation_id,
+            definition.version,
+            parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
         )
+        if not valid_transform_chain(
+            layer.source,
+            [*layer.transforms, candidate],
+            color_ramp_active=layer.color_ramp is not None,
+        ):
+            return
+        layer.transforms.append(candidate)
         self._commit_recipe(recipe, instance_id)
 
     def _transform_removed(self, instance_id: str) -> None:
@@ -558,6 +565,12 @@ class MainWindow(QMainWindow):
             return
         item = transforms.pop(old_index)
         transforms.insert(target_index, item)
+        if not valid_transform_chain(
+            self._layer(recipe).source,
+            transforms,
+            color_ramp_active=self._layer(recipe).color_ramp is not None,
+        ):
+            return
         self._commit_recipe(recipe, instance_id)
 
     def _transform_enabled(self, instance_id: str, enabled: bool) -> None:
