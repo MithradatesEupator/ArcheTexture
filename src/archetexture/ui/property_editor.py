@@ -21,12 +21,30 @@ from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, Par
 from archetexture.core.recipe import OperationInstance
 
 
+class _DirectSpinBox(QSpinBox):
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class _DirectDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class PropertyEditor(QWidget):
     valueChanged = Signal(str, object)
+    bindingRequested = Signal(str, object, object)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._form = QFormLayout()
+        self._control_fields: dict = {}
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
         self._heading.setStyleSheet("font-weight: 600; font-size: 15px")
@@ -72,13 +90,27 @@ class PropertyEditor(QWidget):
             row = QHBoxLayout(container)
             row.setContentsMargins(0, 0, 0, 0)
             row.addWidget(QLabel(f"Control field: {value.source_id}"), 1)
+            actions = QWidget()
+            action_row = QHBoxLayout(actions)
+            action_row.setContentsMargins(0, 0, 0, 0)
+            edit = QPushButton("Edit binding")
+            edit.setObjectName(f"edit-binding-{spec.identifier}")
+            edit.setEnabled(bool(self._control_fields))
+            edit.clicked.connect(
+                lambda _checked=False, key=spec.identifier, parameter=spec, current=value: (
+                    self.bindingRequested.emit(key, parameter, current)
+                )
+            )
+            action_row.addWidget(edit)
             unlink = QPushButton("Use constant")
+            unlink.setObjectName(f"unbind-{spec.identifier}")
             unlink.clicked.connect(
                 lambda _checked=False, key=spec.identifier, default=spec.default: (
                     self.valueChanged.emit(key, default)
                 )
             )
-            row.addWidget(unlink)
+            action_row.addWidget(unlink)
+            row.addWidget(actions)
             container.setObjectName(f"parameter-{spec.identifier}")
             container.setToolTip(spec.description)
             return container
@@ -98,7 +130,7 @@ class PropertyEditor(QWidget):
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
             )
         elif spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
-            widget = QSpinBox()
+            widget = _DirectSpinBox()
             widget.setRange(
                 int(spec.min_value if spec.min_value is not None else -(2**31)),
                 int(spec.max_value if spec.max_value is not None else 2**31 - 1),
@@ -109,7 +141,7 @@ class PropertyEditor(QWidget):
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
             )
         elif spec.type in {ParameterType.FLOAT, ParameterType.ANGLE, ParameterType.PERCENT}:
-            widget = QDoubleSpinBox()
+            widget = _DirectDoubleSpinBox()
             widget.setDecimals(3)
             widget.setRange(
                 spec.min_value if spec.min_value is not None else -1e6,
@@ -143,7 +175,7 @@ class PropertyEditor(QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             fields = []
             for component in value:
-                spin = QDoubleSpinBox()
+                spin = _DirectDoubleSpinBox()
                 spin.setRange(-1e6, 1e6)
                 spin.setDecimals(3)
                 spin.setSingleStep(spec.step or 0.01)
@@ -161,7 +193,33 @@ class PropertyEditor(QWidget):
             widget.setEnabled(False)
         widget.setObjectName(f"parameter-{spec.identifier}")
         widget.setToolTip(spec.description)
+        if spec.allows_modulation and spec.type in {
+            ParameterType.FLOAT,
+            ParameterType.INTEGER,
+            ParameterType.ANGLE,
+            ParameterType.PERCENT,
+        }:
+            container = QWidget()
+            row = QHBoxLayout(container)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.addWidget(widget, 1)
+            modulate = QPushButton("Modulate…")
+            modulate.setObjectName(f"modulate-{spec.identifier}")
+            modulate.setEnabled(bool(self._control_fields))
+            modulate.setToolTip(
+                "Create a control field first" if not self._control_fields else spec.description
+            )
+            modulate.clicked.connect(
+                lambda _checked=False, key=spec.identifier, parameter=spec: (
+                    self.bindingRequested.emit(key, parameter, None)
+                )
+            )
+            row.addWidget(modulate)
+            return container
         return widget
+
+    def set_control_fields(self, control_fields: dict) -> None:
+        self._control_fields = control_fields
 
     @staticmethod
     def _color(value) -> QColor:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import sys
@@ -287,8 +288,8 @@ def test_enum_color_and_position_metadata_validation_and_serialization(tmp_path)
         recipe.source.parameters["mode"] = "invalid"
         recipe.source.parameters["color"] = (2.0, 0.0, 0.0, 1.0)
         issues = validate_recipe(recipe)
-        assert any(issue.path == "source.parameters.mode" for issue in issues)
-        assert any(issue.path == "source.parameters.color" for issue in issues)
+        assert any(issue.path == "layers[0].source.parameters.mode" for issue in issues)
+        assert any(issue.path == "layers[0].source.parameters.color" for issue in issues)
     finally:
         REGISTRY.unregister(definition.identifier)
 
@@ -341,9 +342,11 @@ def test_populated_json_round_trip_restores_domain_types_and_render():
         path = Path(directory) / "populated.archetexture"
         save_project(recipe, path)
         document = json.loads(path.read_text(encoding="utf-8"))
-        assert document["source"]["operation_id"] == "generator.linear_gradient"
+        assert document["schema_version"] == 2
+        assert document["layers"][0]["source"]["operation_id"] == "generator.linear_gradient"
         assert (
-            document["transforms"][0]["parameters"]["threshold"]["$type"] == "control_field_binding"
+            document["layers"][0]["transforms"][0]["parameters"]["threshold"]["$type"]
+            == "control_field_binding"
         )
         loaded = load_project(path)
     assert loaded == recipe
@@ -497,8 +500,8 @@ def test_validation_reports_dimensions_versions_parameters_and_unknown_operation
     issues = validate_recipe(recipe)
     paths = {issue.path for issue in issues}
     assert "width" in paths
-    assert "source.parameters.value" in paths
-    assert "transforms[0].operation_version" in paths
+    assert "layers[0].source.parameters.value" in paths
+    assert "layers[0].transforms[0].operation_version" in paths
 
     recipe.source.operation_id = "generator.missing"
     assert any("unknown operation" in issue.message for issue in validate_recipe(recipe))
@@ -509,13 +512,86 @@ def test_invalid_transform_chain_and_future_schema_are_rejected(tmp_path):
     recipe.transforms = [operation("generator.constant", "wrong-kind")]
     assert any("must be a transform" in issue.message for issue in validate_recipe(recipe))
     future = tmp_path / "future.archetexture"
-    future.write_text('{"schema_version": 2}', encoding="utf-8")
+    future.write_text('{"schema_version": 3}', encoding="utf-8")
     with pytest.raises(UnsupportedSchemaVersion):
         load_project(future)
     malformed = tmp_path / "broken.archetexture"
     malformed.write_text("{broken", encoding="utf-8")
     with pytest.raises(ProjectFormatError):
         load_project(malformed)
+
+
+def _write_invalid_project(path, case: str) -> None:
+    valid_path = path.with_name("valid-base.archetexture")
+    save_project(constant_recipe(0.6), valid_path)
+    payload = json.loads(valid_path.read_text(encoding="utf-8"))
+    if case == "unknown-source":
+        payload["layers"][0]["source"]["operation_id"] = "definitely.invalid.operation"
+    elif case == "unknown-transform":
+        payload["layers"][0]["transforms"] = [
+            {
+                "instance_id": "bad-transform",
+                "operation_id": "definitely.invalid.operation",
+                "operation_version": 1,
+                "enabled": True,
+                "parameters": {},
+                "influence": 1.0,
+            }
+        ]
+    elif case == "unsupported-operation-version":
+        payload["layers"][0]["source"]["operation_version"] = 999
+    elif case == "future-schema":
+        payload["schema_version"] = 999
+    elif case == "malformed-recipe":
+        payload["width"] = 0
+    elif case == "malformed-json":
+        path.write_text("{not-json", encoding="utf-8")
+        return
+    else:
+        raise AssertionError(f"Unknown invalid-project case: {case}")
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unknown-source",
+        "unknown-transform",
+        "unsupported-operation-version",
+        "future-schema",
+        "malformed-json",
+        "malformed-recipe",
+    ],
+)
+@pytest.mark.parametrize("saved_before_failure", [False, True], ids=["dirty", "saved"])
+def test_failed_open_preserves_document_path_savepoint_recipe_and_history(
+    tmp_path, case, saved_before_failure
+):
+    document = DocumentController(constant_recipe(0.1))
+    previous_path = tmp_path / "current.archetexture"
+    document.save(previous_path)
+    document.edit(lambda recipe: recipe.source.parameters.__setitem__("value", 0.2))
+    document.edit(lambda recipe: recipe.source.parameters.__setitem__("value", 0.3))
+    document.undo()
+    if saved_before_failure:
+        document.save()
+
+    assert document.can_undo and document.can_redo
+    assert document.dirty is (not saved_before_failure)
+    expected_recipe = document.recipe
+    expected_history = copy.deepcopy(document.history)
+    expected_path = document.project_path
+    invalid_path = tmp_path / f"{case}.archetexture"
+    _write_invalid_project(invalid_path, case)
+
+    with pytest.raises((ProjectFormatError, ValidationError, UnsupportedSchemaVersion)):
+        document.open_project(invalid_path)
+
+    assert document.recipe == expected_recipe
+    assert document.project_path == expected_path
+    assert document.dirty is (not saved_before_failure)
+    assert document.history == expected_history
+    assert document.can_undo and document.can_redo
 
 
 def test_history_push_copies_mutable_recipes():

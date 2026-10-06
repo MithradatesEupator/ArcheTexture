@@ -12,7 +12,12 @@ from archetexture.core.parameters import (
     ParameterSpec,
     ParameterType,
 )
-from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.recipe import (
+    ControlFieldRecipe,
+    LayerRecipe,
+    OperationInstance,
+    ProjectRecipe,
+)
 from archetexture.core.registry import REGISTRY
 
 
@@ -259,19 +264,21 @@ def validate_recipe(
         return [ValidationIssue("recipe", "must be a ProjectRecipe")]
     if not isinstance(recipe.schema_version, int) or isinstance(recipe.schema_version, bool):
         issues.append(ValidationIssue("schema_version", "must be an integer"))
-    elif recipe.schema_version != 1:
-        issues.append(ValidationIssue("schema_version", "supported schema version is 1"))
+    elif recipe.schema_version != 2:
+        issues.append(ValidationIssue("schema_version", "supported schema version is 2"))
     for name in ("width", "height"):
         value = getattr(recipe, name)
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             issues.append(ValidationIssue(name, "must be a positive integer"))
     if not isinstance(recipe.seed, int) or isinstance(recipe.seed, bool) or recipe.seed < 0:
         issues.append(ValidationIssue("seed", "must be a non-negative integer"))
-    if not isinstance(recipe.transforms, list):
-        issues.append(ValidationIssue("transforms", "must be a list"))
-        transforms = []
+    if not isinstance(recipe.layers, list):
+        issues.append(ValidationIssue("layers", "must be a list"))
+        layers = []
     else:
-        transforms = recipe.transforms
+        layers = recipe.layers
+    if not layers:
+        issues.append(ValidationIssue("layers", "at least one layer is required"))
     if not isinstance(recipe.control_fields, dict):
         issues.append(ValidationIssue("control_fields", "must be an object"))
         control_fields = {}
@@ -279,79 +286,114 @@ def validate_recipe(
         control_fields = recipe.control_fields
     control_ids = set(control_fields)
 
-    if recipe.source is None:
-        issues.append(ValidationIssue("source", "a source generator is required"))
-        previous_type = None
-    else:
-        previous_type = _validate_instance(
-            recipe.source, "source", OperationType.GENERATOR, registry, control_ids, issues
-        )
-    for index, instance in enumerate(transforms):
-        path = f"transforms[{index}]"
-        current_type = _validate_instance(
-            instance, path, OperationType.TRANSFORM, registry, control_ids, issues
-        )
-        if isinstance(instance, OperationInstance):
-            try:
-                definition = registry.get(instance.operation_id)
-            except (KeyError, TypeError):
-                definition = None
-            if definition is not None and previous_type not in definition.input_types:
-                issues.append(
-                    ValidationIssue(
-                        path,
-                        f"cannot accept the preceding {previous_type or 'unknown'} field type",
-                    )
-                )
-        previous_type = current_type
-
-    if recipe.color_ramp is not None:
-        if not isinstance(recipe.color_ramp, ColorRamp):
-            issues.append(ValidationIssue("color_ramp", "must be a ColorRamp"))
+    layer_ids: set[str] = set()
+    all_instances: list[OperationInstance | None] = []
+    for layer_index, layer in enumerate(layers):
+        path = f"layers[{layer_index}]"
+        if not isinstance(layer, LayerRecipe):
+            issues.append(ValidationIssue(path, "must be a LayerRecipe"))
+            continue
+        if not isinstance(layer.layer_id, str) or not layer.layer_id:
+            issues.append(ValidationIssue(f"{path}.layer_id", "must be a non-empty string"))
+        elif layer.layer_id in layer_ids:
+            issues.append(ValidationIssue(f"{path}.layer_id", "layer identifiers must be unique"))
         else:
-            if not isinstance(recipe.color_ramp.stops, (tuple, list)):
-                issues.append(
-                    ValidationIssue("color_ramp.stops", "must be an array of ColorStop values")
-                )
-                stops = ()
+            layer_ids.add(layer.layer_id)
+        if not isinstance(layer.name, str) or not layer.name.strip():
+            issues.append(ValidationIssue(f"{path}.name", "must be a non-empty string"))
+        if not isinstance(layer.enabled, bool):
+            issues.append(ValidationIssue(f"{path}.enabled", "must be a boolean"))
+        if not _finite_number(layer.opacity) or not 0.0 <= float(layer.opacity) <= 1.0:
+            issues.append(ValidationIssue(f"{path}.opacity", "must be between zero and one"))
+        if not isinstance(layer.blend_mode, str) or layer.blend_mode not in {
+            "normal",
+            "multiply",
+            "screen",
+            "add",
+        }:
+            issues.append(ValidationIssue(f"{path}.blend_mode", "unsupported blend mode"))
+        if layer.source is None:
+            issues.append(ValidationIssue(f"{path}.source", "a source generator is required"))
+            previous_type = None
+        else:
+            previous_type = _validate_instance(
+                layer.source,
+                f"{path}.source",
+                OperationType.GENERATOR,
+                registry,
+                control_ids,
+                issues,
+            )
+        if not isinstance(layer.transforms, list):
+            issues.append(ValidationIssue(f"{path}.transforms", "must be a list"))
+            layer_transforms = []
+        else:
+            layer_transforms = layer.transforms
+        for index, instance in enumerate(layer_transforms):
+            item_path = f"{path}.transforms[{index}]"
+            current_type = _validate_instance(
+                instance, item_path, OperationType.TRANSFORM, registry, control_ids, issues
+            )
+            if isinstance(instance, OperationInstance):
+                try:
+                    definition = registry.get(instance.operation_id)
+                except (KeyError, TypeError):
+                    definition = None
+                if definition is not None and previous_type not in definition.input_types:
+                    issues.append(
+                        ValidationIssue(
+                            item_path,
+                            f"cannot accept the preceding {previous_type or 'unknown'} field type",
+                        )
+                    )
+            previous_type = current_type
+        ramp = layer.color_ramp
+        if ramp is not None:
+            ramp_path = f"{path}.color_ramp"
+            if not isinstance(ramp, ColorRamp):
+                issues.append(ValidationIssue(ramp_path, "must be a ColorRamp"))
             else:
-                stops = recipe.color_ramp.stops
+                stops = ramp.stops if isinstance(ramp.stops, (tuple, list)) else ()
                 if not stops:
                     issues.append(
-                        ValidationIssue("color_ramp.stops", "must contain at least one stop")
+                        ValidationIssue(f"{ramp_path}.stops", "must contain at least one stop")
                     )
-            for index, stop in enumerate(stops):
-                path = f"color_ramp.stops[{index}]"
-                if not isinstance(stop, ColorStop):
-                    issues.append(ValidationIssue(path, "must be a ColorStop"))
-                    continue
-                if not _finite_number(stop.position) or not 0.0 <= stop.position <= 1.0:
+                for index, stop in enumerate(stops):
+                    stop_path = f"{ramp_path}.stops[{index}]"
+                    if not isinstance(stop, ColorStop):
+                        issues.append(ValidationIssue(stop_path, "must be a ColorStop"))
+                        continue
+                    if not _finite_number(stop.position) or not 0.0 <= stop.position <= 1.0:
+                        issues.append(
+                            ValidationIssue(f"{stop_path}.position", "must be between zero and one")
+                        )
+                    if (
+                        not isinstance(stop.color, (tuple, list))
+                        or len(stop.color) != 4
+                        or not all(_finite_number(c) and 0 <= c <= 1 for c in stop.color)
+                    ):
+                        issues.append(
+                            ValidationIssue(
+                                f"{stop_path}.color", "must contain four normalized channels"
+                            )
+                        )
+                positions = [
+                    float(s.position)
+                    for s in stops
+                    if isinstance(s, ColorStop) and _finite_number(s.position)
+                ]
+                if len(positions) != len(set(positions)):
                     issues.append(
-                        ValidationIssue(f"{path}.position", "must be between zero and one")
+                        ValidationIssue(f"{ramp_path}.stops", "stop positions must be unique")
                     )
-                if (
-                    not isinstance(stop.color, (tuple, list))
-                    or len(stop.color) != 4
-                    or not all(
-                        _finite_number(channel) and 0.0 <= channel <= 1.0 for channel in stop.color
-                    )
-                ):
-                    issues.append(
-                        ValidationIssue(f"{path}.color", "must contain four normalized channels")
-                    )
-            positions = [
-                float(stop.position)
-                for stop in stops
-                if isinstance(stop, ColorStop) and _finite_number(stop.position)
-            ]
-            if len(positions) != len(set(positions)):
-                issues.append(ValidationIssue("color_ramp.stops", "stop positions must be unique"))
-        if previous_type not in {None, "scalar"}:
-            issues.append(ValidationIssue("color_ramp", "color ramps require scalar source output"))
+            if previous_type not in {None, "scalar"}:
+                issues.append(
+                    ValidationIssue(ramp_path, "color ramps require scalar source output")
+                )
+        all_instances.extend([layer.source, *layer_transforms])
 
     graph: dict[str, set[str]] = {}
     instance_ids: set[str] = set()
-    all_instances = [recipe.source, *transforms]
     for control_id, control in control_fields.items():
         path = f"control_fields.{control_id}"
         if not isinstance(control_id, str) or not control_id:

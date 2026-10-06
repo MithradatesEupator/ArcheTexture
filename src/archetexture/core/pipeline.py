@@ -192,4 +192,26 @@ def evaluate_recipe(
         if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
             raise ValueError(f"Render {name} must be a positive integer")
     evaluation = _Evaluation(recipe, output_width, output_height, registry)
-    return _evaluate_pipeline(recipe.source, recipe.transforms, evaluation, recipe.seed)
+    layer = recipe.layers[0]
+    return _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)
+
+
+def evaluate_layer(
+    recipe: ProjectRecipe,
+    layer,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    registry: OperationDefinitionSet = REGISTRY,
+) -> Field:
+    """Evaluate one layer using the document's shared control-field namespace."""
+    ensure_valid_recipe(recipe, registry)
+    if layer not in recipe.layers:
+        raise ValueError("Layer does not belong to this recipe")
+    output_width = recipe.width if width is None else width
+    output_height = recipe.height if height is None else height
+    for name, dimension in (("width", output_width), ("height", output_height)):
+        if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
+            raise ValueError(f"Render {name} must be a positive integer")
+    evaluation = _Evaluation(recipe, output_width, output_height, registry)
+    return _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)

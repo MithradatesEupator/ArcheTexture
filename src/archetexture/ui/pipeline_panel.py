@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.core.operations import OperationType
-from archetexture.core.recipe import ProjectRecipe
+from archetexture.core.recipe import LayerRecipe, ProjectRecipe
 from archetexture.core.registry import REGISTRY
 
 
@@ -38,8 +38,11 @@ class PipelinePanel(QWidget):
             for definition in REGISTRY.definitions.values()
             if definition.operation_type == OperationType.GENERATOR
         ]
+        self._generators.sort(key=lambda definition: (definition.category, definition.name))
         for definition in self._generators:
-            self.source_selector.addItem(definition.name, definition.identifier)
+            self.source_selector.addItem(
+                f"{definition.category} / {definition.name}", definition.identifier
+            )
         self.source_selector.currentIndexChanged.connect(self._source_selected)
         layout.addWidget(self.source_selector)
 
@@ -55,8 +58,11 @@ class PipelinePanel(QWidget):
             for definition in REGISTRY.definitions.values()
             if definition.operation_type == OperationType.TRANSFORM
         ]
+        self._transforms.sort(key=lambda definition: (definition.category, definition.name))
         for definition in self._transforms:
-            self.transform_selector.addItem(definition.name, definition.identifier)
+            self.transform_selector.addItem(
+                f"{definition.category} / {definition.name}", definition.identifier
+            )
         layout.addWidget(self.transform_selector)
 
         controls = QHBoxLayout()
@@ -82,15 +88,21 @@ class PipelinePanel(QWidget):
         self.output_description.setWordWrap(True)
         layout.addWidget(self.output_description)
 
-    def set_recipe(self, recipe: ProjectRecipe, selected_instance_id: str | None = None) -> None:
+    def set_recipe(
+        self,
+        recipe: ProjectRecipe,
+        selected_instance_id: str | None = None,
+        layer: LayerRecipe | None = None,
+    ) -> None:
+        layer = layer or (recipe.layers[0] if recipe.layers else None)
         self._syncing = True
         self.source_selector.blockSignals(True)
         self.transform_list.blockSignals(True)
-        if recipe.source is not None:
-            source_index = self.source_selector.findData(recipe.source.operation_id)
+        if layer is not None and layer.source is not None:
+            source_index = self.source_selector.findData(layer.source.operation_id)
             self.source_selector.setCurrentIndex(source_index)
         self.transform_list.clear()
-        for instance in recipe.transforms:
+        for instance in layer.transforms if layer is not None else ():
             definition = REGISTRY.get(instance.operation_id)
             item = QListWidgetItem(definition.name)
             item.setData(Qt.ItemDataRole.UserRole, instance.instance_id)
@@ -113,6 +125,11 @@ class PipelinePanel(QWidget):
         self.transform_list.blockSignals(False)
         self._syncing = False
         self._update_buttons()
+        self.output_description.setText(
+            "Scalar → Color Ramp → RGBA"
+            if layer is not None and layer.color_ramp is not None
+            else "Scalar → Grayscale RGBA"
+        )
 
     def _find_item(self, instance_id: str) -> QListWidgetItem | None:
         for index in range(self.transform_list.count()):

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import json
+
 import numpy as np
 import pytest
 from PySide6.QtCore import Qt
@@ -18,6 +21,7 @@ from archetexture.core.operations import OperationDefinition, OperationType, Sea
 from archetexture.core.parameters import ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.main_window import build_main_window
 
 
@@ -62,6 +66,44 @@ def test_workbench_shows_pipeline_properties_and_rendered_viewport(workbench):
     assert workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value") is not None
     assert workbench.viewport.rendered_field.shape == (32, 48, 4)
     assert workbench.viewport.rendered_field.dtype == np.float32
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_png_export_keeps_document_state_unchanged(workbench, qtbot, tmp_path, dirty):
+    document = workbench.document
+    if dirty:
+        edited_recipe = document.recipe
+        edited_recipe.seed += 1
+        document.commit(edited_recipe)
+    snapshot = copy.deepcopy(document.recipe)
+    history_entries = copy.deepcopy(document.history.entries)
+    history_index = document.history.index
+    selected_id = workbench._selected_instance_id
+    destination = tmp_path / "workbench.png"
+
+    assert workbench._start_export(destination, 13, 7)
+    assert not workbench.export_action.isEnabled()
+    qtbot.waitUntil(
+        lambda: destination.exists() and workbench.export_action.isEnabled(), timeout=5000
+    )
+
+    assert document.recipe == snapshot
+    assert document.project_path is None
+    assert document.dirty is dirty
+    assert document.history.entries == history_entries
+    assert document.history.index == history_index
+    assert workbench._selected_instance_id == selected_id
+    assert workbench.statusBar().currentMessage() == "Exported workbench.png"
+
+
+def test_export_dialog_defaults_dimensions_and_lock_ratio(qtbot):
+    dialog = ExportImageDialog(small_recipe())
+    qtbot.addWidget(dialog)
+    assert dialog.dimensions == (48, 32)
+    assert dialog.lock_aspect.isChecked()
+    dialog.width_spin.setValue(96)
+    assert dialog.dimensions == (96, 64)
+    assert "6,144 pixels" in dialog.info_label.text()
 
 
 def test_property_editor_builds_enum_boolean_color_and_position_controls(qtbot, monkeypatch):
@@ -255,7 +297,7 @@ def test_new_document_discards_only_after_explicit_confirmation(workbench, qtbot
     assert workbench.document.dirty
     assert workbench.new_document()
     recipe = workbench.document.recipe
-    assert recipe.source.operation_id == "generator.white_noise"
+    assert recipe.source.operation_id == "generator.fractal_noise"
     assert not workbench.document.dirty
     qtbot.waitUntil(
         lambda: (
@@ -316,6 +358,80 @@ def test_save_load_render_equivalence_and_dirty_document_protection(
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
     )
     assert workbench.close()
+
+
+def test_failed_open_preserves_dirty_work_and_successful_open_still_works(
+    workbench, qtbot, monkeypatch, tmp_path
+):
+    valid_path = tmp_path / "valid.archetexture"
+    assert workbench.save_project(str(valid_path))
+    saved_pixels = workbench.viewport.rendered_field.copy()
+
+    value = workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value")
+    value.setValue(0.4)
+    workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value").setValue(0.5)
+    workbench.undo()
+    qtbot.waitUntil(
+        lambda: workbench.statusBar().currentMessage() != "Rendering…",
+        timeout=5000,
+    )
+    assert workbench.document.dirty
+    assert workbench.document.can_undo and workbench.document.can_redo
+
+    invalid_payload = json.loads(valid_path.read_text(encoding="utf-8"))
+    invalid_payload["layers"][0]["source"]["operation_id"] = "definitely.invalid.operation"
+    invalid_path = tmp_path / "invalid-operation.archetexture"
+    invalid_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
+
+    expected_recipe = workbench.document.recipe
+    expected_history = copy.deepcopy(workbench.document.history)
+    expected_path = workbench.document.project_path
+    expected_selection = workbench._selected_instance_id
+    expected_pixels = workbench.viewport.rendered_field.copy()
+    expected_title = workbench.windowTitle()
+    errors = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Invalid Open must be rejected before prompting to save or discard"
+        ),
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "critical",
+        lambda _parent, title, message: errors.append((title, message)),
+    )
+
+    assert not workbench.open_project(str(invalid_path))
+    assert len(errors) == 1
+    assert errors[0][0] == "Open failed"
+    assert "unknown operation" in errors[0][1]
+    assert "Traceback" not in errors[0][1]
+    assert workbench.document.recipe == expected_recipe
+    assert workbench.document.dirty
+    assert workbench.document.project_path == expected_path
+    assert workbench.document.history == expected_history
+    assert workbench.document.can_undo and workbench.document.can_redo
+    assert workbench._selected_instance_id == expected_selection
+    assert workbench.windowTitle() == expected_title
+    assert np.array_equal(workbench.viewport.rendered_field, expected_pixels)
+
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
+    )
+    assert workbench.open_project(str(valid_path))
+    assert workbench.document.recipe == small_recipe()
+    assert not workbench.document.dirty
+    assert workbench.document.project_path == str(valid_path)
+    assert not workbench.document.can_undo and not workbench.document.can_redo
+    qtbot.waitUntil(
+        lambda: workbench.statusBar().currentMessage() != "Rendering…",
+        timeout=5000,
+    )
+    assert np.array_equal(workbench.viewport.rendered_field, saved_pixels)
 
 
 def test_save_as_adds_project_extension(workbench, tmp_path):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from archetexture.core.defaults import default_recipe
@@ -9,6 +10,16 @@ from archetexture.core.history import HistoryManager
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.core.serialization import load_project, save_project
 from archetexture.core.validation import ensure_valid_recipe
+
+
+@dataclass(frozen=True)
+class PreparedProject:
+    """A fully decoded project with replacement document state ready to install."""
+
+    recipe: ProjectRecipe
+    saved_recipe: ProjectRecipe
+    history: HistoryManager
+    path: str
 
 
 class DocumentController:
@@ -74,14 +85,34 @@ class DocumentController:
         self._saved_recipe = copy.deepcopy(new_recipe)
         return self.recipe
 
-    def open_project(self, path: str | Path) -> ProjectRecipe:
+    def prepare_project(self, path: str | Path) -> PreparedProject:
         loaded = load_project(path)
         ensure_valid_recipe(loaded)
-        self._recipe = copy.deepcopy(loaded)
-        self.project_path = str(Path(path))
-        self.history.reset(loaded)
-        self._saved_recipe = copy.deepcopy(loaded)
-        return self.recipe
+        candidate_recipe = copy.deepcopy(loaded)
+        candidate_saved_recipe = copy.deepcopy(candidate_recipe)
+        candidate_history = HistoryManager(capacity=self.history.capacity)
+        candidate_history.reset(candidate_recipe)
+        return PreparedProject(
+            recipe=candidate_recipe,
+            saved_recipe=candidate_saved_recipe,
+            history=candidate_history,
+            path=str(Path(path)),
+        )
+
+    def replace_with_project(self, candidate: PreparedProject) -> ProjectRecipe:
+        if not isinstance(candidate, PreparedProject):
+            raise TypeError("candidate must be a PreparedProject")
+        result = copy.deepcopy(candidate.recipe)
+        self._recipe, self._saved_recipe, self.history, self.project_path = (
+            candidate.recipe,
+            candidate.saved_recipe,
+            candidate.history,
+            candidate.path,
+        )
+        return result
+
+    def open_project(self, path: str | Path) -> ProjectRecipe:
+        return self.replace_with_project(self.prepare_project(path))
 
     def save(self, path: str | Path | None = None) -> str:
         destination = (
