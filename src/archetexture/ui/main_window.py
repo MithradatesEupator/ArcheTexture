@@ -9,7 +9,10 @@ from PySide6.QtCore import QObject, QSettings, Qt, Signal
 from PySide6.QtGui import QActionGroup
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
+    QHBoxLayout,
+    QLabel,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -30,6 +33,7 @@ from archetexture.core.recipe import (
     ProjectRecipe,
 )
 from archetexture.core.registry import REGISTRY
+from archetexture.core.seamlessness import recipe_seamlessness
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
 from archetexture.ui.binding_dialog import BindingDialog
@@ -117,6 +121,33 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(center_panel)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(4)
+        view_row = QHBoxLayout()
+        view_row.setContentsMargins(8, 2, 8, 0)
+        view_row.addWidget(QLabel("View:"))
+        self.viewport_mode_combo = QComboBox(center_panel)
+        self.viewport_mode_combo.setObjectName("viewport-display-mode")
+        for label, mode in (
+            ("Single", "single"),
+            ("Tile 3×3", "tile_3x3"),
+            ("Seam Check", "seam_check"),
+        ):
+            self.viewport_mode_combo.addItem(label, mode)
+        saved_view_mode = self._theme_settings().value("viewport/mode", "single")
+        selected_view_index = self.viewport_mode_combo.findData(saved_view_mode)
+        if selected_view_index < 0:
+            selected_view_index = self.viewport_mode_combo.findData("single")
+        self.viewport_mode_combo.setCurrentIndex(selected_view_index)
+        self.viewport.set_display_mode(self.viewport_mode_combo.currentData())
+        self.viewport_mode_combo.currentIndexChanged.connect(self._viewport_mode_changed)
+        view_row.addWidget(self.viewport_mode_combo)
+        self.seamlessness_label = QLabel("Seamless: Unknown")
+        self.seamlessness_label.setObjectName("seamlessness-status")
+        self.seamlessness_label.setToolTip(
+            "Conservative status for enabled, visible layer sources and transforms."
+        )
+        view_row.addWidget(self.seamlessness_label)
+        view_row.addStretch(1)
+        center_layout.addLayout(view_row)
         center_layout.addWidget(self.viewport, 1)
         center_layout.addWidget(self.color_ramp_editor, 0)
 
@@ -222,6 +253,15 @@ class MainWindow(QMainWindow):
             "ArcheTexture",
         )
 
+    def _viewport_mode_changed(self, index: int) -> None:
+        mode = self.viewport_mode_combo.itemData(index)
+        if mode not in TextureViewport.DISPLAY_MODES:
+            mode = "single"
+        self.viewport.set_display_mode(mode)
+        settings = self._theme_settings()
+        settings.setValue("viewport/mode", mode)
+        settings.sync()
+
     def _layer(self, recipe: ProjectRecipe | None = None) -> LayerRecipe:
         recipe = recipe or self.document.recipe
         layer = next(
@@ -241,6 +281,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         recipe = self.document.recipe
         layer = self._layer(recipe)
+        self.seamlessness_label.setText(f"Seamless: {recipe_seamlessness(recipe)}")
         if self._selected_instance_id is None or not self._contains_instance(
             recipe, self._selected_instance_id
         ):
