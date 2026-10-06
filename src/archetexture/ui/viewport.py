@@ -45,16 +45,18 @@ class TextureViewport(QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#d8dce2"))
+        dark_mode = self.palette().color(self.palette().ColorRole.Window).lightness() < 128
+        background = QColor("#202329") if dark_mode else QColor("#d8dce2")
+        light = QColor("#30343b") if dark_mode else QColor("#eef0f3")
+        dark = QColor("#272a30") if dark_mode else QColor("#dfe3e8")
+        painter.fillRect(self.rect(), background)
         tile_size = 18
-        light = QColor("#eef0f3")
-        dark = QColor("#dfe3e8")
         for row in range(0, self.height(), tile_size):
             for column in range(0, self.width(), tile_size):
                 color = light if (row // tile_size + column // tile_size) % 2 == 0 else dark
                 painter.fillRect(QRect(column, row, tile_size, tile_size), color)
         if self._pixmap.isNull():
-            painter.setPen(QColor("#4a5360"))
+            painter.setPen(self.palette().color(self.palette().ColorRole.Text))
             painter.drawText(
                 self.rect(),
                 Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,

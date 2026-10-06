@@ -18,6 +18,14 @@ from PySide6.QtWidgets import (
 from archetexture.color.ramp import ColorRamp, ColorStop
 
 
+class _RampPositionSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class RampPreview(QWidget):
     """Paint a checkerboard-backed ramp and draggable stop handles."""
 
@@ -70,12 +78,15 @@ class RampPreview(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         track = self.track_rect()
         tile = 9
+        dark_mode = self.palette().color(self.palette().ColorRole.Window).lightness() < 128
+        checker_light = QColor("#444952") if dark_mode else QColor("#ffffff")
+        checker_dark = QColor("#30343b") if dark_mode else QColor("#cfd4dc")
         for y in range(track.top(), track.bottom() + 1, tile):
             for x in range(track.left(), track.right() + 1, tile):
                 shade = (
-                    QColor("#ffffff")
+                    checker_light
                     if ((x - track.left()) // tile + (y - track.top()) // tile) % 2 == 0
-                    else QColor("#cfd4dc")
+                    else checker_dark
                 )
                 painter.fillRect(QRect(x, y, tile, tile).intersected(track), shade)
 
@@ -194,6 +205,7 @@ class ColorRampEditor(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._ramp: ColorRamp | None = None
         self._selected_key: tuple[float, tuple[float, float, float, float]] | None = None
+        self._selection_restore_key: tuple[float, tuple[float, float, float, float]] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 4, 6, 5)
@@ -232,7 +244,7 @@ class ColorRampEditor(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(6)
         controls.addWidget(QLabel("Selected stop position"))
-        self.position_spin = QDoubleSpinBox()
+        self.position_spin = _RampPositionSpinBox()
         self.position_spin.setObjectName("ramp-position")
         self.position_spin.setDecimals(6)
         self.position_spin.setSingleStep(0.001)
@@ -289,17 +301,24 @@ class ColorRampEditor(QWidget):
         )
 
     def set_ramp(self, ramp: ColorRamp | None, *, reset_selection: bool = False) -> None:
+        if reset_selection:
+            self._selection_restore_key = None
         old_key = None if reset_selection else self._selected_key
         self._ramp = ramp
         stops = self._stops()
         if not stops:
             self._selected_key = None
+        elif self._selection_restore_key in {(stop.position, stop.color) for stop in stops}:
+            self._selected_key = self._selection_restore_key
+            self._selection_restore_key = None
         elif old_key is not None:
             exact = next(
                 (stop for stop in stops if (stop.position, stop.color) == old_key),
                 None,
             )
-            surviving = exact or min(stops, key=lambda stop: abs(stop.position - old_key[0]))
+            surviving = exact or min(
+                stops, key=lambda stop: (abs(stop.position - old_key[0]), stop.position)
+            )
             self._selected_key = (surviving.position, surviving.color)
         else:
             self._selected_key = (stops[0].position, stops[0].color)
@@ -362,6 +381,8 @@ class ColorRampEditor(QWidget):
         stops = tuple(sorted(ramp.stops, key=lambda stop: stop.position))
         if index is None or not 0 <= index < len(stops):
             return
+        if self._selection_restore_key is None and self._selected_key is not None:
+            self._selection_restore_key = self._selected_key
         self._ramp = ramp
         selected = stops[index]
         self._selected_key = (selected.position, selected.color)

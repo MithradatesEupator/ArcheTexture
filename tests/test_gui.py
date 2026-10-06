@@ -379,7 +379,7 @@ def test_failed_open_preserves_dirty_work_and_successful_open_still_works(
     assert workbench.document.can_undo and workbench.document.can_redo
 
     invalid_payload = json.loads(valid_path.read_text(encoding="utf-8"))
-    invalid_payload["source"]["operation_id"] = "definitely.invalid.operation"
+    invalid_payload["layers"][0]["source"]["operation_id"] = "definitely.invalid.operation"
     invalid_path = tmp_path / "invalid-operation.archetexture"
     invalid_path.write_text(json.dumps(invalid_payload), encoding="utf-8")
 

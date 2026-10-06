@@ -53,6 +53,39 @@ def test_png_is_deterministic(tmp_path):
     np.testing.assert_array_equal(np.asarray(Image.open(first)), np.asarray(Image.open(second)))
 
 
+def test_png_exports_complete_multilayer_composite(tmp_path):
+    from archetexture.core.recipe import LayerRecipe
+
+    recipe = ProjectRecipe(
+        width=9,
+        height=6,
+        layers=[
+            LayerRecipe(
+                "base",
+                "Base",
+                OperationInstance(
+                    "base-source", "generator.constant", 1, parameters={"value": 0.5}
+                ),
+                color_ramp=ColorRamp((ColorStop(0, (0, 0, 1, 1)), ColorStop(1, (0, 0, 1, 1)))),
+            ),
+            LayerRecipe(
+                "top",
+                "Top",
+                OperationInstance("top-source", "generator.constant", 1, parameters={"value": 0.5}),
+                color_ramp=ColorRamp((ColorStop(0, (1, 0, 0, 1)), ColorStop(1, (1, 0, 0, 1)))),
+                opacity=0.3,
+                blend_mode="normal",
+            ),
+        ],
+    )
+    destination = tmp_path / "composite.png"
+    ImageExporter().export_png(recipe, destination)
+    actual = np.asarray(Image.open(destination))
+    expected = rgba_float_to_uint8(RenderEngine().render(recipe).rgba_field)
+    np.testing.assert_array_equal(actual, expected)
+    assert tuple(actual[0, 0]) == (76, 0, 178, 255)
+
+
 def test_grayscale_and_transform_pipeline_export_as_rgba(tmp_path):
     recipe = ProjectRecipe(
         width=8,

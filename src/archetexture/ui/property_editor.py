@@ -21,6 +21,22 @@ from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, Par
 from archetexture.core.recipe import OperationInstance
 
 
+class _DirectSpinBox(QSpinBox):
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
+class _DirectDoubleSpinBox(QDoubleSpinBox):
+    def wheelEvent(self, event) -> None:
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+
 class PropertyEditor(QWidget):
     valueChanged = Signal(str, object)
     bindingRequested = Signal(str, object, object)
@@ -114,7 +130,7 @@ class PropertyEditor(QWidget):
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
             )
         elif spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
-            widget = QSpinBox()
+            widget = _DirectSpinBox()
             widget.setRange(
                 int(spec.min_value if spec.min_value is not None else -(2**31)),
                 int(spec.max_value if spec.max_value is not None else 2**31 - 1),
@@ -125,7 +141,7 @@ class PropertyEditor(QWidget):
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
             )
         elif spec.type in {ParameterType.FLOAT, ParameterType.ANGLE, ParameterType.PERCENT}:
-            widget = QDoubleSpinBox()
+            widget = _DirectDoubleSpinBox()
             widget.setDecimals(3)
             widget.setRange(
                 spec.min_value if spec.min_value is not None else -1e6,
@@ -159,7 +175,7 @@ class PropertyEditor(QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             fields = []
             for component in value:
-                spin = QDoubleSpinBox()
+                spin = _DirectDoubleSpinBox()
                 spin.setRange(-1e6, 1e6)
                 spin.setDecimals(3)
                 spin.setSingleStep(spec.step or 0.01)

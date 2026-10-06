@@ -9,10 +9,15 @@ from typing import Any
 
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
-from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.recipe import (
+    ControlFieldRecipe,
+    LayerRecipe,
+    OperationInstance,
+    ProjectRecipe,
+)
 from archetexture.core.validation import ensure_valid_recipe
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 class ProjectFormatError(ValueError):
@@ -158,6 +163,37 @@ def _decode_control(payload: Any) -> ControlFieldRecipe:
     )
 
 
+def _encode_layer(layer: LayerRecipe) -> dict[str, Any]:
+    return {
+        "layer_id": layer.layer_id,
+        "name": layer.name,
+        "enabled": layer.enabled,
+        "opacity": layer.opacity,
+        "blend_mode": layer.blend_mode,
+        "source": _encode_instance(layer.source),
+        "transforms": [_encode_instance(item) for item in layer.transforms],
+        "color_ramp": _encode_ramp(layer.color_ramp),
+    }
+
+
+def _decode_layer(payload: Any, index: int) -> LayerRecipe:
+    if not isinstance(payload, dict):
+        raise ProjectFormatError(f"layers[{index}] must be an object")
+    transforms = payload.get("transforms", [])
+    if not isinstance(transforms, list):
+        raise ProjectFormatError(f"layers[{index}].transforms must be an array")
+    return LayerRecipe(
+        layer_id=payload.get("layer_id", ""),
+        name=payload.get("name", ""),
+        enabled=payload.get("enabled", True),
+        opacity=payload.get("opacity", 1.0),
+        blend_mode=payload.get("blend_mode", "normal"),
+        source=_decode_instance(payload.get("source")),
+        transforms=[_decode_instance(item) for item in transforms],
+        color_ramp=_decode_ramp(payload.get("color_ramp")),
+    )
+
+
 def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
     if not isinstance(data, dict):
         raise ProjectFormatError("Project root must be a JSON object")
@@ -168,22 +204,40 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
         raise UnsupportedSchemaVersion(
             f"Project schema {version} is newer than supported schema {CURRENT_SCHEMA_VERSION}"
         )
-    if version != CURRENT_SCHEMA_VERSION:
+    if version not in (1, CURRENT_SCHEMA_VERSION):
         raise UnsupportedSchemaVersion(f"Unsupported project schema version: {version}")
-    transforms = data.get("transforms", [])
     control_fields = data.get("control_fields", {})
-    if not isinstance(transforms, list):
-        raise ProjectFormatError("transforms must be an array")
     if not isinstance(control_fields, dict):
         raise ProjectFormatError("control_fields must be an object")
+    if version == 1:
+        transforms = data.get("transforms", [])
+        if not isinstance(transforms, list):
+            raise ProjectFormatError("transforms must be an array")
+        source = _decode_instance(data.get("source"), allow_none=True)
+        layers = (
+            [
+                LayerRecipe(
+                    "layer-1",
+                    "Layer 1",
+                    source,
+                    [_decode_instance(item) for item in transforms],
+                    _decode_ramp(data.get("color_ramp")),
+                )
+            ]
+            if source is not None
+            else []
+        )
+    else:
+        raw_layers = data.get("layers")
+        if not isinstance(raw_layers, list):
+            raise ProjectFormatError("layers must be an array")
+        layers = [_decode_layer(item, index) for index, item in enumerate(raw_layers)]
     recipe = ProjectRecipe(
-        schema_version=version,
+        schema_version=CURRENT_SCHEMA_VERSION,
         width=data.get("width", 256),
         height=data.get("height", 256),
         seed=data.get("seed", 0),
-        source=_decode_instance(data.get("source"), allow_none=True),
-        transforms=[_decode_instance(item) for item in transforms],
-        color_ramp=_decode_ramp(data.get("color_ramp")),
+        layers=layers,
         control_fields={key: _decode_control(value) for key, value in control_fields.items()},
     )
     ensure_valid_recipe(recipe)
@@ -207,9 +261,7 @@ def _encode_recipe(recipe: ProjectRecipe) -> dict[str, Any]:
         "width": recipe.width,
         "height": recipe.height,
         "seed": recipe.seed,
-        "source": _encode_instance(recipe.source),
-        "transforms": [_encode_instance(item) for item in recipe.transforms],
-        "color_ramp": _encode_ramp(recipe.color_ramp),
+        "layers": [_encode_layer(item) for item in recipe.layers],
         "control_fields": {
             key: _encode_control(recipe.control_fields[key])
             for key in sorted(recipe.control_fields)

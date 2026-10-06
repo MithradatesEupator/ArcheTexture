@@ -5,7 +5,8 @@ import sys
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtGui import QActionGroup, QColor, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,7 +23,12 @@ from archetexture.color.ramp import ColorRamp
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ControlFieldBinding
-from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.recipe import (
+    ControlFieldRecipe,
+    LayerRecipe,
+    OperationInstance,
+    ProjectRecipe,
+)
 from archetexture.core.registry import REGISTRY
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
@@ -30,6 +36,7 @@ from archetexture.ui.binding_dialog import BindingDialog
 from archetexture.ui.color_ramp_editor import ColorRampEditor
 from archetexture.ui.control_fields_editor import ControlFieldsEditor
 from archetexture.ui.export_image_dialog import ExportImageDialog
+from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.property_editor import PropertyEditor
 from archetexture.ui.viewport import TextureViewport
@@ -49,6 +56,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._application = application
         self.document = DocumentController(recipe)
+        self._selected_layer_id = self.document.recipe.layers[0].layer_id
         self._selected_instance_id: str | None = None
         self._selected_control_field_id: str | None = None
         self._closing = False
@@ -68,6 +76,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ArcheTexture")
         self.resize(1360, 850)
         self.pipeline_panel = PipelinePanel(self)
+        self.layers_panel = LayersPanel(self)
         self.viewport = TextureViewport(self)
         self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
@@ -93,6 +102,15 @@ class MainWindow(QMainWindow):
         self.control_fields_editor.bindingRequested.connect(self._control_binding_requested)
         self.color_ramp_editor.rampEdited.connect(self._color_ramp_changed)
         self.color_ramp_editor.previewRequested.connect(self._preview_color_ramp)
+        self.layers_panel.addRequested.connect(self._add_layer)
+        self.layers_panel.removeRequested.connect(self._remove_layer)
+        self.layers_panel.duplicateRequested.connect(self._duplicate_layer)
+        self.layers_panel.renameRequested.connect(self._rename_layer)
+        self.layers_panel.selectionChanged.connect(self._select_layer)
+        self.layers_panel.enabledChanged.connect(self._layer_enabled)
+        self.layers_panel.moved.connect(self._layer_moved)
+        self.layers_panel.opacityChanged.connect(self._layer_opacity_changed)
+        self.layers_panel.blendModeChanged.connect(self._layer_blend_changed)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
@@ -102,7 +120,12 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.color_ramp_editor, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.pipeline_panel)
+        left_panel = QWidget(self)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self.layers_panel, 1)
+        left_layout.addWidget(self.pipeline_panel, 1)
+        splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         self.right_tabs = QTabWidget(self)
         self.right_tabs.addTab(self.property_editor, "Properties")
@@ -116,12 +139,15 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(splitter)
 
         self._create_actions()
-        self._selected_instance_id = self.document.recipe.source.instance_id
+        self._selected_instance_id = self._layer().source.instance_id
+        self._configure_theme()
         self._refresh_document(request_render=True)
 
     def _create_actions(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
         edit_menu = self.menuBar().addMenu("&Edit")
+        view_menu = self.menuBar().addMenu("&View")
+        appearance_menu = view_menu.addMenu("&Appearance")
         self.new_action = file_menu.addAction("&New")
         self.open_action = file_menu.addAction("&Open…")
         self.save_action = file_menu.addAction("&Save")
@@ -132,6 +158,18 @@ class MainWindow(QMainWindow):
         self.exit_action = file_menu.addAction("E&xit")
         self.undo_action = edit_menu.addAction("&Undo")
         self.redo_action = edit_menu.addAction("&Redo")
+        self.theme_actions = {}
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for mode in ("System", "Light", "Dark"):
+            selected_mode = mode.lower()
+            action = appearance_menu.addAction(mode)
+            action.setCheckable(True)
+            group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, selected=selected_mode: self._set_theme(selected)
+            )
+            self.theme_actions[selected_mode] = action
 
         toolbar = QToolBar("Document", self)
         self.addToolBar(toolbar)
@@ -156,6 +194,57 @@ class MainWindow(QMainWindow):
         self.redo_action.triggered.connect(self.redo)
         self.statusBar().showMessage("Ready")
 
+    def _configure_theme(self) -> None:
+        self._system_palette = self._application.style().standardPalette()
+        settings = self._theme_settings()
+        mode = settings.value("appearance/theme", "system")
+        self._set_theme(mode if mode in {"system", "light", "dark"} else "system", persist=False)
+
+    def _set_theme(self, mode: str, *, persist: bool = True) -> None:
+        if mode == "system":
+            self._application.setPalette(self._system_palette)
+        else:
+            palette = QPalette()
+            if mode == "dark":
+                palette.setColor(QPalette.ColorRole.Window, QColor("#25282d"))
+                palette.setColor(QPalette.ColorRole.WindowText, QColor("#e6e8eb"))
+                palette.setColor(QPalette.ColorRole.Base, QColor("#191b1f"))
+                palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#2d3036"))
+                palette.setColor(QPalette.ColorRole.Text, QColor("#e6e8eb"))
+                palette.setColor(QPalette.ColorRole.Button, QColor("#353940"))
+                palette.setColor(QPalette.ColorRole.ButtonText, QColor("#e6e8eb"))
+                palette.setColor(QPalette.ColorRole.Highlight, QColor("#4b86c6"))
+                palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+                palette.setColor(QPalette.ColorRole.Mid, QColor("#555b64"))
+            else:
+                palette = self._system_palette
+            self._application.setPalette(palette)
+        if hasattr(self, "theme_actions"):
+            self.theme_actions[mode].setChecked(True)
+        if persist:
+            settings = self._theme_settings()
+            settings.setValue("appearance/theme", mode)
+            settings.sync()
+
+    @staticmethod
+    def _theme_settings() -> QSettings:
+        return QSettings(
+            QSettings.Format.IniFormat,
+            QSettings.Scope.UserScope,
+            "ArcheTexture",
+            "ArcheTexture",
+        )
+
+    def _layer(self, recipe: ProjectRecipe | None = None) -> LayerRecipe:
+        recipe = recipe or self.document.recipe
+        layer = next(
+            (item for item in recipe.layers if item.layer_id == self._selected_layer_id), None
+        )
+        if layer is None:
+            layer = recipe.layers[0]
+            self._selected_layer_id = layer.layer_id
+        return layer
+
     def _refresh_document(
         self,
         *,
@@ -164,16 +253,18 @@ class MainWindow(QMainWindow):
         reset_ramp_selection: bool = False,
     ) -> None:
         recipe = self.document.recipe
+        layer = self._layer(recipe)
         if self._selected_instance_id is None or not self._contains_instance(
             recipe, self._selected_instance_id
         ):
-            self._selected_instance_id = recipe.source.instance_id if recipe.source else None
-        self.pipeline_panel.set_recipe(recipe, self._selected_instance_id)
+            self._selected_instance_id = layer.source.instance_id if layer.source else None
+        self.layers_panel.set_recipe(recipe, self._selected_layer_id)
+        self.pipeline_panel.set_recipe(recipe, self._selected_instance_id, layer)
         self.property_editor.set_control_fields(recipe.control_fields)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
         self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
-            recipe.color_ramp,
+            layer.color_ramp,
             reset_selection=reset_ramp_selection,
         )
         if refresh_properties:
@@ -184,22 +275,26 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _contains_instance(recipe: ProjectRecipe, instance_id: str) -> bool:
-        instances = [recipe.source, *recipe.transforms]
+        instances = [
+            instance for layer in recipe.layers for instance in [layer.source, *layer.transforms]
+        ]
         return any(item is not None and item.instance_id == instance_id for item in instances)
 
     def _refresh_property_editor(self, recipe: ProjectRecipe) -> None:
         instance = None
-        if recipe.source is not None and recipe.source.instance_id == self._selected_instance_id:
-            instance = recipe.source
-        else:
-            instance = next(
+        layer = self._layer(recipe)
+        instance = (
+            layer.source
+            if layer.source.instance_id == self._selected_instance_id
+            else next(
                 (
                     item
-                    for item in recipe.transforms
+                    for item in layer.transforms
                     if item.instance_id == self._selected_instance_id
                 ),
                 None,
             )
+        )
         definition = REGISTRY.get(instance.operation_id) if instance is not None else None
         self.property_editor.set_operation(instance, definition)
 
@@ -228,12 +323,12 @@ class MainWindow(QMainWindow):
 
     def _color_ramp_changed(self, color_ramp: ColorRamp | None) -> None:
         recipe = self.document.recipe
-        recipe.color_ramp = color_ramp
+        self._layer(recipe).color_ramp = color_ramp
         self._commit_recipe(recipe, self._selected_instance_id)
 
     def _preview_color_ramp(self, color_ramp: ColorRamp) -> None:
         recipe = self.document.recipe
-        recipe.color_ramp = color_ramp
+        self._layer(recipe).color_ramp = color_ramp
         self._request_render(recipe)
 
     def _on_render_complete(self, outcome: RenderOutcome) -> None:
@@ -323,13 +418,14 @@ class MainWindow(QMainWindow):
 
     def _source_changed(self, operation_id: str) -> None:
         recipe = self.document.recipe
-        if recipe.source is not None and recipe.source.operation_id == operation_id:
+        layer = self._layer(recipe)
+        if layer.source is not None and layer.source.operation_id == operation_id:
             return
         definition = REGISTRY.get(operation_id)
         if definition.operation_type != OperationType.GENERATOR:
             return
-        instance_id = recipe.source.instance_id if recipe.source else "source"
-        recipe.source = OperationInstance(
+        instance_id = layer.source.instance_id if layer.source else f"source-{uuid.uuid4().hex[:8]}"
+        layer.source = OperationInstance(
             instance_id,
             operation_id,
             definition.version,
@@ -339,11 +435,12 @@ class MainWindow(QMainWindow):
 
     def _transform_added(self, operation_id: str) -> None:
         recipe = self.document.recipe
+        layer = self._layer(recipe)
         definition = REGISTRY.get(operation_id)
         if definition.operation_type != OperationType.TRANSFORM:
             return
         instance_id = f"transform-{uuid.uuid4().hex[:12]}"
-        recipe.transforms.append(
+        layer.transforms.append(
             OperationInstance(
                 instance_id,
                 operation_id,
@@ -355,42 +452,41 @@ class MainWindow(QMainWindow):
 
     def _transform_removed(self, instance_id: str) -> None:
         recipe = self.document.recipe
+        layer = self._layer(recipe)
         old_index = next(
             (
                 index
-                for index, item in enumerate(recipe.transforms)
+                for index, item in enumerate(layer.transforms)
                 if item.instance_id == instance_id
             ),
             None,
         )
         if old_index is None:
             return
-        del recipe.transforms[old_index]
-        selected_id = recipe.source.instance_id if recipe.source else None
-        if recipe.transforms:
-            selected_id = recipe.transforms[min(old_index, len(recipe.transforms) - 1)].instance_id
+        del layer.transforms[old_index]
+        selected_id = layer.source.instance_id if layer.source else None
+        if layer.transforms:
+            selected_id = layer.transforms[min(old_index, len(layer.transforms) - 1)].instance_id
         self._commit_recipe(recipe, selected_id)
 
     def _transform_moved(self, instance_id: str, target_index: int) -> None:
         recipe = self.document.recipe
+        transforms = self._layer(recipe).transforms
         old_index = next(
-            (
-                index
-                for index, item in enumerate(recipe.transforms)
-                if item.instance_id == instance_id
-            ),
+            (index for index, item in enumerate(transforms) if item.instance_id == instance_id),
             None,
         )
-        if old_index is None or not 0 <= target_index < len(recipe.transforms):
+        if old_index is None or not 0 <= target_index < len(transforms):
             return
-        item = recipe.transforms.pop(old_index)
-        recipe.transforms.insert(target_index, item)
+        item = transforms.pop(old_index)
+        transforms.insert(target_index, item)
         self._commit_recipe(recipe, instance_id)
 
     def _transform_enabled(self, instance_id: str, enabled: bool) -> None:
         recipe = self.document.recipe
+        layer = self._layer(recipe)
         instance = next(
-            (item for item in recipe.transforms if item.instance_id == instance_id),
+            (item for item in layer.transforms if item.instance_id == instance_id),
             None,
         )
         if instance is None or instance.enabled == enabled:
@@ -404,10 +500,11 @@ class MainWindow(QMainWindow):
 
     def _property_changed(self, parameter_id: str, value) -> None:
         recipe = self.document.recipe
+        layer = self._layer(recipe)
         instance = next(
             (
                 item
-                for item in [recipe.source, *recipe.transforms]
+                for item in [layer.source, *layer.transforms]
                 if item is not None and item.instance_id == self._selected_instance_id
             ),
             None,
@@ -427,6 +524,113 @@ class MainWindow(QMainWindow):
             instance.instance_id,
             refresh_properties=refresh_properties,
         )
+
+    def _select_layer(self, layer_id: str) -> None:
+        if not any(layer.layer_id == layer_id for layer in self.document.recipe.layers):
+            return
+        self._selected_layer_id = layer_id
+        layer = self._layer()
+        self._selected_instance_id = layer.source.instance_id
+        self._refresh_document(request_render=False, reset_ramp_selection=True)
+
+    def _add_layer(self) -> None:
+        recipe = self.document.recipe
+        number = 1
+        names = {layer.name for layer in recipe.layers}
+        while f"Layer {number}" in names:
+            number += 1
+        layer_id = f"layer-{uuid.uuid4().hex[:12]}"
+        recipe.layers.append(
+            LayerRecipe(
+                layer_id,
+                f"Layer {number}",
+                OperationInstance(
+                    f"source-{uuid.uuid4().hex[:12]}",
+                    "generator.constant",
+                    1,
+                    parameters={"value": 0.5},
+                ),
+            )
+        )
+        self._selected_layer_id = layer_id
+        self._selected_instance_id = recipe.layers[-1].source.instance_id
+        self._commit_recipe(recipe, self._selected_instance_id)
+
+    def _remove_layer(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        if len(recipe.layers) <= 1:
+            self.statusBar().showMessage("A project must keep at least one layer", 5000)
+            return
+        index = next(
+            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+        )
+        if index is None:
+            return
+        del recipe.layers[index]
+        selected = recipe.layers[min(index, len(recipe.layers) - 1)]
+        self._selected_layer_id = selected.layer_id
+        self._selected_instance_id = selected.source.instance_id
+        self._commit_recipe(recipe, self._selected_instance_id)
+
+    def _duplicate_layer(self, layer_id: str) -> None:
+        import copy
+
+        recipe = self.document.recipe
+        index = next(
+            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+        )
+        if index is None:
+            return
+        duplicate = copy.deepcopy(recipe.layers[index])
+        duplicate.layer_id = f"layer-{uuid.uuid4().hex[:12]}"
+        duplicate.name = f"{duplicate.name} Copy"
+        for instance in [duplicate.source, *duplicate.transforms]:
+            instance.instance_id = f"op-{uuid.uuid4().hex[:12]}"
+        recipe.layers.insert(index + 1, duplicate)
+        self._selected_layer_id = duplicate.layer_id
+        self._selected_instance_id = duplicate.source.instance_id
+        self._commit_recipe(recipe, self._selected_instance_id)
+
+    def _rename_layer(self, layer_id: str, name: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        name = name.strip()
+        if layer is None or not name or layer.name == name:
+            self._refresh_document(request_render=False)
+            return
+        layer.name = name
+        self._commit_recipe(recipe)
+
+    def _layer_enabled(self, layer_id: str, enabled: bool) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is not None and layer.enabled != enabled:
+            layer.enabled = enabled
+            self._commit_recipe(recipe)
+
+    def _layer_moved(self, layer_id: str, target_index: int) -> None:
+        recipe = self.document.recipe
+        old_index = next(
+            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+        )
+        if old_index is None or not 0 <= target_index < len(recipe.layers):
+            return
+        recipe.layers.insert(target_index, recipe.layers.pop(old_index))
+        self._commit_recipe(recipe)
+
+    def _layer_opacity_changed(self, layer_id: str, opacity: float) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is not None and layer.opacity != opacity:
+            layer.opacity = opacity
+            self._commit_recipe(recipe)
+
+    def _layer_blend_changed(self, layer_id: str, mode: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        if layer is not None and layer.blend_mode != mode:
+            layer.blend_mode = mode
+            self._commit_recipe(recipe)
 
     def _control_field_selected(self, identifier: str) -> None:
         self._selected_control_field_id = identifier
@@ -498,7 +702,9 @@ class MainWindow(QMainWindow):
             self._refresh_document(request_render=False)
             return
         recipe.control_fields[new_id] = recipe.control_fields.pop(old_id)
-        instances = [recipe.source, *recipe.transforms]
+        instances = [
+            instance for layer in recipe.layers for instance in [layer.source, *layer.transforms]
+        ]
         for control in recipe.control_fields.values():
             instances.extend((control.source, *control.transforms))
         for instance in instances:
@@ -518,10 +724,13 @@ class MainWindow(QMainWindow):
                 yield from MainWindow._iter_control_bindings(item, f"{path}[{index}]")
 
     def _first_control_reference(self, recipe: ProjectRecipe, identifier: str) -> str | None:
-        instances = [("main source", recipe.source)]
-        instances.extend(
-            (f"main transform {item.operation_id}", item) for item in recipe.transforms
-        )
+        instances = []
+        for layer in recipe.layers:
+            label = "main source" if len(recipe.layers) == 1 else f"{layer.name} source"
+            instances.append((label, layer.source))
+            instances.extend(
+                (f"{layer.name} transform {item.operation_id}", item) for item in layer.transforms
+            )
         for field_id, control in recipe.control_fields.items():
             instances.append((f"control field {field_id} source", control.source))
             instances.extend(
@@ -672,7 +881,7 @@ class MainWindow(QMainWindow):
         instance = next(
             (
                 item
-                for item in [recipe.source, *recipe.transforms]
+                for item in [self._layer(recipe).source, *self._layer(recipe).transforms]
                 if item is not None and item.instance_id == self._selected_instance_id
             ),
             None,
@@ -743,7 +952,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.new_document()
-        self._selected_instance_id = recipe.source.instance_id if recipe.source else None
+        self._selected_layer_id = recipe.layers[0].layer_id
+        self._selected_instance_id = recipe.layers[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 
@@ -766,7 +976,8 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.replace_with_project(candidate)
-        self._selected_instance_id = recipe.source.instance_id if recipe.source else None
+        self._selected_layer_id = recipe.layers[0].layer_id
+        self._selected_instance_id = recipe.layers[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 
