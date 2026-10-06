@@ -20,6 +20,9 @@ from archetexture.core.recipe import (
 )
 from archetexture.core.registry import REGISTRY
 
+MAX_PROJECT_DIMENSION = 8192
+MAX_PROJECT_SEED = 2**31 - 1
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -268,10 +271,20 @@ def validate_recipe(
         issues.append(ValidationIssue("schema_version", "supported schema version is 2"))
     for name in ("width", "height"):
         value = getattr(recipe, name)
-        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-            issues.append(ValidationIssue(name, "must be a positive integer"))
-    if not isinstance(recipe.seed, int) or isinstance(recipe.seed, bool) or recipe.seed < 0:
-        issues.append(ValidationIssue("seed", "must be a non-negative integer"))
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 1 <= value <= MAX_PROJECT_DIMENSION
+        ):
+            issues.append(
+                ValidationIssue(name, f"must be an integer from 1 to {MAX_PROJECT_DIMENSION}")
+            )
+    if (
+        not isinstance(recipe.seed, int)
+        or isinstance(recipe.seed, bool)
+        or not 0 <= recipe.seed <= MAX_PROJECT_SEED
+    ):
+        issues.append(ValidationIssue("seed", f"must be an integer from 0 to {MAX_PROJECT_SEED}"))
     if not isinstance(recipe.layers, list):
         issues.append(ValidationIssue("layers", "must be a list"))
         layers = []

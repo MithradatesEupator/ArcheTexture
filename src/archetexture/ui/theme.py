@@ -108,6 +108,7 @@ def theme_stylesheet(mode: str) -> str:
         QMainWindow, QDialog, QTabWidget::pane {{ background: {window}; }}
         QWidget#property-editor, QWidget#control-fields-editor,
         QWidget#control-operation-properties {{ background: {window}; }}
+        QLabel#project-size-warning {{ color: {highlight}; }}
         QMenuBar, QToolBar, QStatusBar {{ background: {window}; color: {text}; }}
         QToolBar {{ border: 0; spacing: 4px; padding: 3px; }}
         QStatusBar::item {{ border: 0; }}

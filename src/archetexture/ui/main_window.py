@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QActionGroup, QPalette
+from PySide6.QtGui import QActionGroup, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -35,6 +35,7 @@ from archetexture.core.recipe import (
 )
 from archetexture.core.registry import REGISTRY
 from archetexture.core.seamlessness import recipe_seamlessness
+from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
 from archetexture.ui.binding_dialog import BindingDialog
@@ -43,6 +44,7 @@ from archetexture.ui.control_fields_editor import ControlFieldsEditor
 from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.pipeline_panel import PipelinePanel
+from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
 from archetexture.ui.property_editor import PropertyEditor
 from archetexture.ui.theme import palette_for_mode, theme_stylesheet
 from archetexture.ui.viewport import TextureViewport
@@ -191,6 +193,9 @@ class MainWindow(QMainWindow):
         self.exit_action = file_menu.addAction("E&xit")
         self.undo_action = edit_menu.addAction("&Undo")
         self.redo_action = edit_menu.addAction("&Redo")
+        edit_menu.addSeparator()
+        self.project_settings_action = edit_menu.addAction("Project Settings…")
+        self.project_settings_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         self.theme_actions = {}
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -225,7 +230,13 @@ class MainWindow(QMainWindow):
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo)
         self.redo_action.triggered.connect(self.redo)
+        self.project_settings_action.triggered.connect(self._show_project_settings)
         self.statusBar().showMessage("Ready")
+        self.project_status_label = QLabel(self)
+        self.project_status_label.setObjectName("project-status")
+        self.project_status_label.setMargin(4)
+        self.project_status_label.setToolTip("Current project canvas size and global seed")
+        self.statusBar().addPermanentWidget(self.project_status_label)
 
     def _configure_theme(self) -> None:
         if not hasattr(self._application, "_archetexture_system_style_name"):
@@ -348,6 +359,8 @@ class MainWindow(QMainWindow):
         path = Path(self.document.project_path).name if self.document.project_path else "Untitled"
         dirty = "*" if self.document.dirty else ""
         self.setWindowTitle(f"{path}{dirty} — ArcheTexture")
+        recipe = self.document.recipe
+        self.project_status_label.setText(f"{recipe.width} × {recipe.height} · Seed {recipe.seed}")
         self.undo_action.setEnabled(self.document.can_undo)
         self.redo_action.setEnabled(self.document.can_redo)
         self.save_action.setEnabled(True)
@@ -461,6 +474,25 @@ class MainWindow(QMainWindow):
             request_render=True,
             refresh_properties=refresh_properties,
         )
+
+    def _show_project_settings(self, *_args) -> bool:
+        dialog = ProjectSettingsDialog(self.document.recipe, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        width, height, seed = dialog.proposed_settings
+        recipe = self.document.recipe
+        if (width, height, seed) == (recipe.width, recipe.height, recipe.seed):
+            return False
+        recipe.width = width
+        recipe.height = height
+        recipe.seed = seed
+        try:
+            ensure_valid_recipe(recipe)
+        except ValidationError as exc:
+            QMessageBox.warning(self, "Invalid Project Settings", str(exc))
+            return False
+        self._commit_recipe(recipe)
+        return True
 
     def _source_changed(self, operation_id: str) -> None:
         recipe = self.document.recipe
