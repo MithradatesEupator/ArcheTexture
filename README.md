@@ -21,9 +21,16 @@ desktop workflow is functional and covered by automated tests.
   color ramp at the RGBA display boundary. Display and PNG output share the
   same clipped, rounded 8-bit channel conversion.
 
-Control fields can be represented, validated, serialized, and bound to numeric
-operation parameters. A graphical color-ramp editor is available; control
-fields do not yet have a graphical editor.
+Control fields are reusable scalar recipes with a generator source, ordered
+transform chain, and optional normalized global mapping. Create and manage them
+in the Control Fields tab, then bind them to compatible numeric parameters or
+transform Influence from Properties. Each binding has its own output range,
+invert, curve, and optional quantization settings. Rename updates references;
+deletion is blocked while a field is in use. Cyclic control-field references
+are rejected before a document edit is committed. Nested control-field
+references can be edited through the same property controls, but there is no
+dependency-graph view or standalone control-field preview. The graphical
+color-ramp editor remains beneath the main viewport.
 
 PNG export preserves alpha and writes atomically, replacing an existing file
 only after a complete image is ready. PNG is the only image export format. No
@@ -85,7 +92,6 @@ no lockfile; installs resolve versions allowed by the declared minimum ranges.
 Dependency locking is deferred to a dedicated packaging phase rather than
 adding another packaging system in this work.
 
-ArcheTexture currently has a small operation set, no graphical control-field
-editing, and no advanced seamless synthesis, node graph, layers, GPU
-acceleration, or packaged installer. These are future development areas, not
-implemented features.
+ArcheTexture remains in early development and has a small operation set, no
+advanced seamless synthesis, node graph, layers, GPU acceleration, or packaged
+installer. These are future development areas, not implemented features.

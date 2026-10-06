@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSplitter,
+    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -20,11 +22,13 @@ from archetexture.color.ramp import ColorRamp
 from archetexture.core.document import DocumentController
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ControlFieldBinding
-from archetexture.core.recipe import OperationInstance, ProjectRecipe
+from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
+from archetexture.ui.binding_dialog import BindingDialog
 from archetexture.ui.color_ramp_editor import ColorRampEditor
+from archetexture.ui.control_fields_editor import ControlFieldsEditor
 from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.property_editor import PropertyEditor
@@ -46,6 +50,7 @@ class MainWindow(QMainWindow):
         self._application = application
         self.document = DocumentController(recipe)
         self._selected_instance_id: str | None = None
+        self._selected_control_field_id: str | None = None
         self._closing = False
         self._export_status_text: str | None = None
         self._export_bridge = _ExportBridge(self)
@@ -66,6 +71,7 @@ class MainWindow(QMainWindow):
         self.viewport = TextureViewport(self)
         self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
+        self.control_fields_editor = ControlFieldsEditor(self)
         self.pipeline_panel.sourceChanged.connect(self._source_changed)
         self.pipeline_panel.transformAdded.connect(self._transform_added)
         self.pipeline_panel.transformRemoved.connect(self._transform_removed)
@@ -73,6 +79,18 @@ class MainWindow(QMainWindow):
         self.pipeline_panel.transformEnabled.connect(self._transform_enabled)
         self.pipeline_panel.selectionChanged.connect(self._select_instance)
         self.property_editor.valueChanged.connect(self._property_changed)
+        self.property_editor.bindingRequested.connect(self._main_binding_requested)
+        self.control_fields_editor.createRequested.connect(self._create_control_field)
+        self.control_fields_editor.fieldSelected.connect(self._control_field_selected)
+        self.control_fields_editor.renameRequested.connect(self._rename_control_field)
+        self.control_fields_editor.removeRequested.connect(self._remove_control_field)
+        self.control_fields_editor.sourceChanged.connect(self._control_source_changed)
+        self.control_fields_editor.transformAdded.connect(self._control_transform_added)
+        self.control_fields_editor.transformRemoved.connect(self._control_transform_removed)
+        self.control_fields_editor.transformMoved.connect(self._control_transform_moved)
+        self.control_fields_editor.transformEnabled.connect(self._control_transform_enabled)
+        self.control_fields_editor.valueChanged.connect(self._control_value_changed)
+        self.control_fields_editor.bindingRequested.connect(self._control_binding_requested)
         self.color_ramp_editor.rampEdited.connect(self._color_ramp_changed)
         self.color_ramp_editor.previewRequested.connect(self._preview_color_ramp)
 
@@ -86,7 +104,11 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.pipeline_panel)
         splitter.addWidget(center_panel)
-        splitter.addWidget(self.property_editor)
+        self.right_tabs = QTabWidget(self)
+        self.right_tabs.addTab(self.property_editor, "Properties")
+        self.right_tabs.addTab(self.control_fields_editor, "Control Fields")
+        self.right_tabs.setObjectName("right-side-tabs")
+        splitter.addWidget(self.right_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
@@ -147,6 +169,9 @@ class MainWindow(QMainWindow):
         ):
             self._selected_instance_id = recipe.source.instance_id if recipe.source else None
         self.pipeline_panel.set_recipe(recipe, self._selected_instance_id)
+        self.property_editor.set_control_fields(recipe.control_fields)
+        self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
+        self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
             recipe.color_ramp,
             reset_selection=reset_ramp_selection,
@@ -279,14 +304,18 @@ class MainWindow(QMainWindow):
         selected_id: str | None = None,
         *,
         refresh_properties: bool = True,
+        control_field_id: str | None = None,
     ) -> None:
         try:
             self.document.commit(recipe)
         except Exception as exc:
             self.statusBar().showMessage(f"Edit rejected: {exc}", 5000)
+            self._refresh_document(request_render=False)
             return
         if selected_id is not None:
             self._selected_instance_id = selected_id
+        if control_field_id is not None:
+            self._selected_control_field_id = control_field_id
         self._refresh_document(
             request_render=True,
             refresh_properties=refresh_properties,
@@ -398,6 +427,289 @@ class MainWindow(QMainWindow):
             instance.instance_id,
             refresh_properties=refresh_properties,
         )
+
+    def _control_field_selected(self, identifier: str) -> None:
+        self._selected_control_field_id = identifier
+
+    def _create_control_field(self) -> None:
+        recipe = self.document.recipe
+        index = 1
+        while f"control-{index}" in recipe.control_fields:
+            index += 1
+        identifier = f"control-{index}"
+        definition = next(
+            (
+                item
+                for item in REGISTRY.definitions.values()
+                if item.operation_type == OperationType.GENERATOR and item.output_type == "scalar"
+            ),
+            None,
+        )
+        if definition is None:
+            self.statusBar().showMessage("No scalar generators are registered", 5000)
+            return
+        recipe.control_fields[identifier] = ControlFieldRecipe(
+            source=OperationInstance(
+                f"{identifier}-source",
+                definition.identifier,
+                definition.version,
+                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+            )
+        )
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    @staticmethod
+    def _rewrite_binding_value(value, old_id: str, new_id: str):
+        if isinstance(value, ControlFieldBinding):
+            if value.source_id == old_id:
+                return ControlFieldBinding(new_id, value.mapping)
+            return value
+        if isinstance(value, dict):
+            return {
+                key: MainWindow._rewrite_binding_value(item, old_id, new_id)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [MainWindow._rewrite_binding_value(item, old_id, new_id) for item in value]
+        if isinstance(value, tuple):
+            return tuple(MainWindow._rewrite_binding_value(item, old_id, new_id) for item in value)
+        return value
+
+    @classmethod
+    def _rewrite_instance_bindings(cls, instance: OperationInstance, old_id: str, new_id: str):
+        instance.parameters = cls._rewrite_binding_value(instance.parameters, old_id, new_id)
+        instance.influence = cls._rewrite_binding_value(instance.influence, old_id, new_id)
+
+    def _rename_control_field(self, old_id: str, new_id: str) -> None:
+        new_id = new_id.strip()
+        recipe = self.document.recipe
+        if old_id not in recipe.control_fields:
+            return
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]*", new_id):
+            self.statusBar().showMessage(
+                "Use a letter followed by letters, numbers, dots, underscores, or hyphens.", 6000
+            )
+            self._refresh_document(request_render=False)
+            return
+        if new_id == old_id:
+            return
+        if new_id in recipe.control_fields:
+            self.statusBar().showMessage(f"Control field '{new_id}' already exists", 5000)
+            self._refresh_document(request_render=False)
+            return
+        recipe.control_fields[new_id] = recipe.control_fields.pop(old_id)
+        instances = [recipe.source, *recipe.transforms]
+        for control in recipe.control_fields.values():
+            instances.extend((control.source, *control.transforms))
+        for instance in instances:
+            if instance is not None:
+                self._rewrite_instance_bindings(instance, old_id, new_id)
+        self._commit_recipe(recipe, control_field_id=new_id)
+
+    @staticmethod
+    def _iter_control_bindings(value, path: str):
+        if isinstance(value, ControlFieldBinding):
+            yield value, path
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from MainWindow._iter_control_bindings(item, f"{path}.{key}")
+        elif isinstance(value, (tuple, list)):
+            for index, item in enumerate(value):
+                yield from MainWindow._iter_control_bindings(item, f"{path}[{index}]")
+
+    def _first_control_reference(self, recipe: ProjectRecipe, identifier: str) -> str | None:
+        instances = [("main source", recipe.source)]
+        instances.extend(
+            (f"main transform {item.operation_id}", item) for item in recipe.transforms
+        )
+        for field_id, control in recipe.control_fields.items():
+            instances.append((f"control field {field_id} source", control.source))
+            instances.extend(
+                (f"control field {field_id} transform {item.operation_id}", item)
+                for item in control.transforms
+            )
+        for description, instance in instances:
+            if instance is None:
+                continue
+            values = [("parameter", instance.parameters), ("influence", instance.influence)]
+            for label, value in values:
+                for binding, path in self._iter_control_bindings(value, label):
+                    if binding.source_id == identifier:
+                        return f"{description} ({path})"
+        return None
+
+    def _remove_control_field(self, identifier: str) -> None:
+        recipe = self.document.recipe
+        if identifier not in recipe.control_fields:
+            return
+        reference = self._first_control_reference(recipe, identifier)
+        if reference is not None:
+            QMessageBox.information(
+                self,
+                "Control field is in use",
+                f"'{identifier}' is referenced by {reference}. Remove that binding first.",
+            )
+            return
+        del recipe.control_fields[identifier]
+        self._commit_recipe(recipe, control_field_id=next(iter(recipe.control_fields), None))
+
+    def _control_source_changed(self, identifier: str, operation_id: str) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        definition = REGISTRY.get(operation_id)
+        if (
+            definition.operation_type != OperationType.GENERATOR
+            or definition.output_type != "scalar"
+        ):
+            return
+        control.source = OperationInstance(
+            control.source.instance_id,
+            operation_id,
+            definition.version,
+            parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+        )
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _control_transform_added(self, identifier: str, operation_id: str) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        definition = REGISTRY.get(operation_id)
+        if not (
+            definition.operation_type == OperationType.TRANSFORM
+            and definition.output_type == "scalar"
+            and ("scalar" in definition.input_types or "any" in definition.input_types)
+        ):
+            return
+        instance_id = f"{identifier}-transform-{uuid.uuid4().hex[:10]}"
+        control.transforms.append(
+            OperationInstance(
+                instance_id,
+                operation_id,
+                definition.version,
+                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+            )
+        )
+        self.control_fields_editor.select_operation(instance_id)
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _control_transform_removed(self, identifier: str, instance_id: str) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        if self.control_fields_editor._selected_operation_id == instance_id:
+            self.control_fields_editor.select_operation(None)
+        control.transforms = [
+            item for item in control.transforms if item.instance_id != instance_id
+        ]
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _control_transform_moved(self, identifier: str, instance_id: str, target: int) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        old = next(
+            (i for i, item in enumerate(control.transforms) if item.instance_id == instance_id),
+            None,
+        )
+        if old is None or not 0 <= target < len(control.transforms):
+            return
+        item = control.transforms.pop(old)
+        control.transforms.insert(target, item)
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _control_transform_enabled(self, identifier: str, instance_id: str, enabled: bool) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        item = (
+            next((item for item in control.transforms if item.instance_id == instance_id), None)
+            if control
+            else None
+        )
+        if item is None or item.enabled == enabled:
+            return
+        item.enabled = enabled
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _control_value_changed(self, identifier: str, key: str, value) -> None:
+        recipe = self.document.recipe
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        if key == "mapping":
+            control.mapping = value
+        else:
+            instance_id, parameter_id = key
+            instance = (
+                control.source
+                if control.source.instance_id == instance_id
+                else next(
+                    (item for item in control.transforms if item.instance_id == instance_id), None
+                )
+            )
+            if instance is None:
+                return
+            if parameter_id == "influence":
+                instance.influence = value
+            else:
+                instance.parameters[parameter_id] = value
+        self._commit_recipe(recipe, control_field_id=identifier)
+
+    def _main_binding_requested(self, key: str, spec, existing) -> None:
+        recipe = self.document.recipe
+        if not recipe.control_fields:
+            self.right_tabs.setCurrentWidget(self.control_fields_editor)
+            self.statusBar().showMessage("Create a control field before binding a parameter", 5000)
+            return
+        dialog = BindingDialog(recipe.control_fields, spec, existing, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        instance = next(
+            (
+                item
+                for item in [recipe.source, *recipe.transforms]
+                if item is not None and item.instance_id == self._selected_instance_id
+            ),
+            None,
+        )
+        if instance is None:
+            return
+        if key == "influence":
+            instance.influence = dialog.binding
+        else:
+            instance.parameters[key] = dialog.binding
+        self._commit_recipe(recipe, instance.instance_id, refresh_properties=True)
+
+    def _control_binding_requested(self, identifier: str, key: str, spec, existing) -> None:
+        recipe = self.document.recipe
+        if not recipe.control_fields:
+            return
+        dialog = BindingDialog(recipe.control_fields, spec, existing, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        control = recipe.control_fields.get(identifier)
+        if control is None:
+            return
+        instance_id, parameter_id = key
+        instance = (
+            control.source
+            if control.source.instance_id == instance_id
+            else next(
+                (item for item in control.transforms if item.instance_id == instance_id), None
+            )
+        )
+        if instance is None:
+            return
+        if parameter_id == "influence":
+            instance.influence = dialog.binding
+        else:
+            instance.parameters[parameter_id] = dialog.binding
+        self._commit_recipe(recipe, control_field_id=identifier)
 
     def undo(self) -> None:
         if not self.document.can_undo:
