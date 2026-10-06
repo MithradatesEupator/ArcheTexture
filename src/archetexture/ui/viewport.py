@@ -6,6 +6,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
 from archetexture.render.engine import RenderResult
+from archetexture.render.pixels import rgba_float_to_uint8
 
 
 class TextureViewport(QWidget):
@@ -23,7 +24,7 @@ class TextureViewport(QWidget):
     def set_result(self, result: RenderResult) -> None:
         rgba = np.ascontiguousarray(np.clip(result.rgba_field, 0.0, 1.0))
         height, width, _ = rgba.shape
-        pixels = np.rint(rgba * 255.0).astype(np.uint8)
+        pixels = rgba_float_to_uint8(rgba)
         image = QImage(
             pixels.data,
             width,

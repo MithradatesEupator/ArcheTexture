@@ -15,12 +15,20 @@ desktop workflow is functional and covered by automated tests.
 - Render on a background worker while the Qt interface remains responsive.
 - Undo and redo recipe edits.
 - Save and reopen human-readable `.archetexture` JSON project files.
+- Export the current recipe snapshot as a lossless 8-bit RGBA PNG at the
+  project dimensions or an independently chosen size from 1 to 8192 pixels.
 - Keep normalized float32 scalar output for computation and apply the optional
-  color ramp at the RGBA display boundary.
+  color ramp at the RGBA display boundary. Display and PNG output share the
+  same clipped, rounded 8-bit channel conversion.
 
 Control fields can be represented, validated, serialized, and bound to numeric
-operation parameters. This first workbench does not yet include a graphical
-control-field or color-ramp editor.
+operation parameters. A graphical color-ramp editor is available; control
+fields do not yet have a graphical editor.
+
+PNG export preserves alpha and writes atomically, replacing an existing file
+only after a complete image is ready. PNG is the only image export format. No
+gamma conversion or color profile management is applied. Dimensions above
+4096 pixels produce a warning in the export dialog.
 
 ## Run the application
 
@@ -78,6 +86,6 @@ Dependency locking is deferred to a dedicated packaging phase rather than
 adding another packaging system in this work.
 
 ArcheTexture currently has a small operation set, no graphical control-field
-or ramp editing, and no advanced seamless synthesis, node graph, layers, GPU
+editing, and no advanced seamless synthesis, node graph, layers, GPU
 acceleration, or packaged installer. These are future development areas, not
 implemented features.

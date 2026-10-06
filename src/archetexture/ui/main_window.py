@@ -22,14 +22,20 @@ from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ControlFieldBinding
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
 from archetexture.ui.color_ramp_editor import ColorRampEditor
+from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.property_editor import PropertyEditor
 from archetexture.ui.viewport import TextureViewport
 
 
 class _RenderBridge(QObject):
+    completed = Signal(object)
+
+
+class _ExportBridge(QObject):
     completed = Signal(object)
 
 
@@ -41,6 +47,12 @@ class MainWindow(QMainWindow):
         self.document = DocumentController(recipe)
         self._selected_instance_id: str | None = None
         self._closing = False
+        self._export_status_text: str | None = None
+        self._export_bridge = _ExportBridge(self)
+        self.export_coordinator = ExportCoordinator(on_complete=self._export_bridge.completed.emit)
+        self._export_bridge.completed.connect(
+            self._on_export_complete, Qt.ConnectionType.QueuedConnection
+        )
         self._render_bridge = _RenderBridge(self)
         self.render_coordinator = RenderCoordinator(on_complete=self._render_bridge.completed.emit)
         self._render_bridge.completed.connect(
@@ -92,6 +104,8 @@ class MainWindow(QMainWindow):
         self.open_action = file_menu.addAction("&Open…")
         self.save_action = file_menu.addAction("&Save")
         self.save_as_action = file_menu.addAction("Save &As…")
+        self.export_action = file_menu.addAction("Export PNG…")
+        self.export_action.setShortcut("Ctrl+Shift+E")
         file_menu.addSeparator()
         self.exit_action = file_menu.addAction("E&xit")
         self.undo_action = edit_menu.addAction("&Undo")
@@ -114,6 +128,7 @@ class MainWindow(QMainWindow):
         self.open_action.triggered.connect(lambda: self.open_project())
         self.save_action.triggered.connect(lambda: self.save_project())
         self.save_as_action.triggered.connect(lambda: self.save_project(save_as=True))
+        self.export_action.triggered.connect(self.export_png)
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo)
         self.redo_action.triggered.connect(self.redo)
@@ -208,7 +223,55 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Render failed")
             return
         self.viewport.set_result(outcome.result)
-        self.statusBar().showMessage("Ready", 3000)
+        self.statusBar().showMessage(self._export_status_text or "Ready", 3000)
+
+    def export_png(self, *_args) -> bool:
+        dialog = ExportImageDialog(self.document.recipe, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        width, height = dialog.dimensions
+        suggestion = (
+            Path(self.document.project_path).with_suffix(".png").name
+            if self.document.project_path
+            else "Untitled.png"
+        )
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            self, "Export PNG", suggestion, "PNG Image (*.png)"
+        )
+        if not destination:
+            return False
+        destination_path = Path(destination)
+        if destination_path.suffix.lower() != ".png":
+            destination_path = (
+                destination_path.with_suffix(".png")
+                if destination_path.suffix
+                else Path(f"{destination_path}.png")
+            )
+        return self._start_export(destination_path, width, height)
+
+    def _start_export(self, destination: str | Path, width: int, height: int) -> bool:
+        try:
+            self.export_coordinator.request(
+                self.document.recipe, destination, width=width, height=height
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Export failed", str(exc))
+            return False
+        self.export_action.setEnabled(False)
+        self._export_status_text = f"Exporting {Path(destination).name}…"
+        self.statusBar().showMessage(self._export_status_text)
+        return True
+
+    def _on_export_complete(self, outcome: ExportOutcome) -> None:
+        if self._closing:
+            return
+        self.export_action.setEnabled(True)
+        self._export_status_text = None
+        if outcome.error is not None:
+            self.statusBar().showMessage("PNG export failed")
+            QMessageBox.critical(self, "Export failed", str(outcome.error))
+            return
+        self.statusBar().showMessage(f"Exported {outcome.destination.name}", 5000)
 
     def _commit_recipe(
         self,
@@ -424,6 +487,7 @@ class MainWindow(QMainWindow):
             return
         self._closing = True
         self.render_coordinator.close(wait=False)
+        self.export_coordinator.close(wait=True)
         event.accept()
 
 

@@ -21,6 +21,7 @@ from archetexture.core.operations import OperationDefinition, OperationType, Sea
 from archetexture.core.parameters import ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.main_window import build_main_window
 
 
@@ -65,6 +66,44 @@ def test_workbench_shows_pipeline_properties_and_rendered_viewport(workbench):
     assert workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value") is not None
     assert workbench.viewport.rendered_field.shape == (32, 48, 4)
     assert workbench.viewport.rendered_field.dtype == np.float32
+
+
+@pytest.mark.parametrize("dirty", [False, True])
+def test_png_export_keeps_document_state_unchanged(workbench, qtbot, tmp_path, dirty):
+    document = workbench.document
+    if dirty:
+        edited_recipe = document.recipe
+        edited_recipe.seed += 1
+        document.commit(edited_recipe)
+    snapshot = copy.deepcopy(document.recipe)
+    history_entries = copy.deepcopy(document.history.entries)
+    history_index = document.history.index
+    selected_id = workbench._selected_instance_id
+    destination = tmp_path / "workbench.png"
+
+    assert workbench._start_export(destination, 13, 7)
+    assert not workbench.export_action.isEnabled()
+    qtbot.waitUntil(
+        lambda: destination.exists() and workbench.export_action.isEnabled(), timeout=5000
+    )
+
+    assert document.recipe == snapshot
+    assert document.project_path is None
+    assert document.dirty is dirty
+    assert document.history.entries == history_entries
+    assert document.history.index == history_index
+    assert workbench._selected_instance_id == selected_id
+    assert workbench.statusBar().currentMessage() == "Exported workbench.png"
+
+
+def test_export_dialog_defaults_dimensions_and_lock_ratio(qtbot):
+    dialog = ExportImageDialog(small_recipe())
+    qtbot.addWidget(dialog)
+    assert dialog.dimensions == (48, 32)
+    assert dialog.lock_aspect.isChecked()
+    dialog.width_spin.setValue(96)
+    assert dialog.dimensions == (96, 64)
+    assert "6,144 pixels" in dialog.info_label.text()
 
 
 def test_property_editor_builds_enum_boolean_color_and_position_controls(qtbot, monkeypatch):
