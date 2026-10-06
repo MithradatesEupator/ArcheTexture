@@ -14,6 +14,7 @@ from archetexture.core.fields import (
     validate_rgba_field,
     validate_scalar_field,
 )
+from archetexture.core.fingerprinting import structural_fingerprint
 from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.parameters import (
     ControlFieldBinding,
@@ -36,8 +37,11 @@ class _Evaluation:
     control_cache: dict[str, ScalarField] = field(default_factory=dict)
     control_stack: set[str] = field(default_factory=set)
     render_context: RenderContext = field(default_factory=RenderContext)
+    session: Any = None
+    cache_enabled: bool = True
 
     def resolve_binding(self, binding: ControlFieldBinding) -> ScalarField:
+        self.render_context.check_cancelled()
         try:
             raw = self.control_field(binding.source_id)
         except KeyError as exc:
@@ -45,6 +49,7 @@ class _Evaluation:
         return ControlFieldEvaluator.evaluate(binding, raw, width=self.width, height=self.height)
 
     def control_field(self, identifier: str) -> ScalarField:
+        self.render_context.check_cancelled()
         if identifier in self.control_cache:
             return self.control_cache[identifier]
         if identifier in self.control_stack:
@@ -54,13 +59,33 @@ class _Evaluation:
             raise KeyError(identifier)
         self.control_stack.add(identifier)
         try:
-            raw = _evaluate_pipeline(
-                control.source,
-                control.transforms,
-                self,
-                self.recipe.seed,
-            )
-            scalar = validate_scalar_field(raw, name=f"control field {identifier}")
+            cache_key = None
+            scalar = None
+            if self.session is not None and self.cache_enabled:
+                cache_key = structural_fingerprint(
+                    {
+                        "control_id": identifier,
+                        "control": control,
+                        "control_fields": self.recipe.control_fields,
+                        "width": self.width,
+                        "height": self.height,
+                        "seed": self.recipe.seed,
+                    },
+                    self.render_context,
+                )
+                scalar = self.session.control_cache.get(cache_key)
+            if scalar is None:
+                self.render_context.check_cancelled()
+                raw = _evaluate_pipeline(
+                    control.source,
+                    control.transforms,
+                    self,
+                    self.recipe.seed,
+                )
+                scalar = validate_scalar_field(raw, name=f"control field {identifier}")
+                self.render_context.check_cancelled()
+                if cache_key is not None:
+                    self.session.control_cache.put(cache_key, scalar)
             if control.mapping is not None:
                 scalar = ControlFieldEvaluator.map_field(control.mapping, scalar)
             self.control_cache[identifier] = ensure_normalized_scalar(scalar)
@@ -109,6 +134,7 @@ def _run_instance(
     evaluation: _Evaluation,
     seed: int,
 ) -> Field:
+    evaluation.render_context.check_cancelled()
     definition = evaluation.registry.get(instance.operation_id)
     if input_field is not None:
         if definition.input_types and "any" not in definition.input_types:
@@ -119,6 +145,8 @@ def _run_instance(
     if implementation is None:
         raise RuntimeError(f"Operation has no implementation: {definition.identifier}")
     raw_parameters = instance.parameters
+    if evaluation.session is not None:
+        evaluation.session.operation_executed()
     parameters = {
         spec.identifier: _coerce_parameter(
             raw_parameters.get(spec.identifier, spec.default), spec, evaluation
@@ -132,6 +160,7 @@ def _run_instance(
         else implementation(*args),
         dtype=np.float32,
     )
+    evaluation.render_context.check_cancelled()
     if definition.output_type == "scalar":
         return ensure_normalized_scalar(validate_scalar_field(result, name=definition.identifier))
     if definition.output_type == "rgba":
@@ -170,14 +199,18 @@ def _evaluate_pipeline(
     evaluation: _Evaluation,
     seed: int,
 ) -> Field:
+    evaluation.render_context.check_cancelled()
     field_value = _run_instance(source, None, evaluation, seed)
+    evaluation.render_context.check_cancelled()
     for instance in transforms:
+        evaluation.render_context.check_cancelled()
         if not instance.enabled:
             continue
         definition = evaluation.registry.get(instance.operation_id)
         if definition.operation_type != OperationType.TRANSFORM:
             raise ValueError(f"Pipeline stage is not a transform: {instance.operation_id}")
         transformed = _run_instance(instance, field_value, evaluation, seed)
+        evaluation.render_context.check_cancelled()
         if isinstance(instance.influence, ControlFieldBinding):
             influence_spec = ParameterSpec(
                 "influence",

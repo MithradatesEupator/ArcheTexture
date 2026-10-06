@@ -146,4 +146,4 @@ def test_image_cache_is_bounded_and_invalidates_changed_files(tmp_path):
     Image.new("RGBA", (2, 1), (255, 0, 0, 255)).save(path)
     second = context.load_rgba8(ref)
     assert first.shape != second.shape
-    assert len(context._cache) == 1
+    assert context.asset_cache.stats["entries"] == 1

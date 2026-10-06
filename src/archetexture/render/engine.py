@@ -5,17 +5,20 @@ from dataclasses import dataclass
 import numpy as np
 
 from archetexture.core.assets import RenderContext
+from archetexture.core.cancellation import RenderCancelled
 from archetexture.core.fields import (
     RGBAField,
     ScalarField,
     validate_rgba_field,
     validate_scalar_field,
 )
+from archetexture.core.fingerprinting import structural_fingerprint
 from archetexture.core.operations import OperationDefinitionSet
 from archetexture.core.pipeline import _evaluate_pipeline, _Evaluation
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.core.registry import REGISTRY
 from archetexture.core.validation import ensure_valid_recipe
+from archetexture.render.session import RenderSession
 
 
 @dataclass(frozen=True)
@@ -26,8 +29,18 @@ class RenderResult:
 
 
 class RenderEngine:
-    def __init__(self, registry: OperationDefinitionSet = REGISTRY):
+    def __init__(
+        self,
+        registry: OperationDefinitionSet = REGISTRY,
+        *,
+        session: RenderSession | None = None,
+    ):
         self.registry = registry
+        self.session = session or RenderSession()
+
+    def render_uncached(self, recipe: ProjectRecipe, **kwargs) -> RenderResult:
+        """Correctness reference path that bypasses layer and Control Field caches."""
+        return self.render(recipe, use_cache=False, **kwargs)
 
     def render(
         self,
@@ -36,39 +49,82 @@ class RenderEngine:
         width: int | None = None,
         height: int | None = None,
         render_context: RenderContext | None = None,
+        use_cache: bool = True,
     ) -> RenderResult:
         output_width = recipe.width if width is None else width
         output_height = recipe.height if height is None else height
         ensure_valid_recipe(recipe, self.registry)
+        context = render_context or RenderContext(asset_cache=self.session.asset_cache)
         evaluation = _Evaluation(
             recipe,
             output_width,
             output_height,
             self.registry,
-            render_context=render_context or RenderContext(),
+            render_context=context,
+            session=self.session,
+            cache_enabled=use_cache,
         )
         composite = np.zeros((output_height, output_width, 4), dtype=np.float32)
         scalar_result: ScalarField | None = None
         mask_fields: dict[str, ScalarField] = {}
-        for layer in recipe.layers:
-            if layer.mask is not None:
-                mask_fields[layer.layer_id] = evaluation.resolve_binding(layer.mask)
-        visible = [layer for layer in recipe.layers if layer.enabled]
-        for layer in visible:
-            field = _evaluate_pipeline(layer.source, layer.transforms, evaluation, recipe.seed)
-            mask = mask_fields.get(layer.layer_id)
-            if field.ndim == 2:
-                scalar = validate_scalar_field(field)
-                scalar_result = scalar
-                if layer.color_ramp is None:
-                    rgba = np.empty((*scalar.shape, 4), dtype=np.float32)
-                    rgba[..., :3] = scalar[..., None]
-                    rgba[..., 3] = 1.0
+        try:
+            for layer in recipe.layers:
+                context.check_cancelled()
+                if layer.mask is not None:
+                    mask_fields[layer.layer_id] = evaluation.resolve_binding(layer.mask)
+            visible = [layer for layer in recipe.layers if layer.enabled]
+            for layer in visible:
+                context.check_cancelled()
+                cache_key = None
+                cached = None
+                if use_cache:
+                    cache_key = structural_fingerprint(
+                        {
+                            "width": output_width,
+                            "height": output_height,
+                            "seed": recipe.seed,
+                            "source": layer.source,
+                            "transforms": layer.transforms,
+                            "color_ramp": layer.color_ramp,
+                            "mask": layer.mask,
+                            "control_fields": recipe.control_fields,
+                        },
+                        context,
+                    )
+                    cached = self.session.layer_cache.get(cache_key)
+                if cached is not None:
+                    rgba, scalar = cached
                 else:
-                    rgba = layer.color_ramp.apply(scalar)
-            else:
-                rgba = validate_rgba_field(field)
-            composite = composite_rgba(composite, rgba, layer.opacity, layer.blend_mode, mask)
+                    field = _evaluate_pipeline(
+                        layer.source, layer.transforms, evaluation, recipe.seed
+                    )
+                    scalar = None
+                    if field.ndim == 2:
+                        scalar = validate_scalar_field(field)
+                        if layer.color_ramp is None:
+                            rgba = np.empty((*scalar.shape, 4), dtype=np.float32)
+                            rgba[..., :3] = scalar[..., None]
+                            rgba[..., 3] = 1.0
+                        else:
+                            rgba = layer.color_ramp.apply(scalar)
+                    else:
+                        rgba = validate_rgba_field(field)
+                    if cache_key is not None:
+                        self.session.layer_cache.put(cache_key, rgba, scalar)
+                if scalar is not None:
+                    scalar_result = scalar
+                context.check_cancelled()
+                composite = composite_rgba(
+                    composite,
+                    rgba,
+                    layer.opacity,
+                    layer.blend_mode,
+                    mask_fields.get(layer.layer_id),
+                )
+                context.check_cancelled()
+        except RenderCancelled:
+            self.session.cancellation_observed()
+            raise
         return RenderResult(scalar_result, validate_rgba_field(composite), mask_fields)
 
 

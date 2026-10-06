@@ -28,7 +28,13 @@ def value_noise(_input, parameters: Mapping[str, Any], width: int, height: int, 
 
 
 def _fractal(
-    parameters: Mapping[str, Any], width: int, height: int, seed: int, *, turbulence: bool
+    parameters: Mapping[str, Any],
+    width: int,
+    height: int,
+    seed: int,
+    *,
+    turbulence: bool,
+    context=None,
 ) -> np.ndarray:
     seed = int(seed) ^ int(parameters["seed"])
     scale = np.asarray(parameters["scale"], dtype=np.float32)
@@ -41,6 +47,8 @@ def _fractal(
     amplitude = 1.0
     amplitude_sum = 0.0
     for octave in range(octaves):
+        if context is not None:
+            context.check_cancelled()
         values = sample_value_noise(
             width,
             height,
@@ -59,12 +67,16 @@ def _fractal(
     return ensure_normalized_scalar(total / amplitude_sum)
 
 
-def fractal_noise(_input, parameters: Mapping[str, Any], width: int, height: int, seed: int):
-    return _fractal(parameters, width, height, seed, turbulence=False)
+def fractal_noise(
+    _input, parameters: Mapping[str, Any], width: int, height: int, seed: int, context=None
+):
+    return _fractal(parameters, width, height, seed, turbulence=False, context=context)
 
 
-def turbulence(_input, parameters: Mapping[str, Any], width: int, height: int, seed: int):
-    return _fractal(parameters, width, height, seed, turbulence=True)
+def turbulence(
+    _input, parameters: Mapping[str, Any], width: int, height: int, seed: int, context=None
+):
+    return _fractal(parameters, width, height, seed, turbulence=True, context=context)
 
 
 def seamless_value_noise(_input, parameters: Mapping[str, Any], width: int, height: int, seed: int):
@@ -80,7 +92,13 @@ def seamless_value_noise(_input, parameters: Mapping[str, Any], width: int, heig
 
 
 def _periodic_fractal(
-    parameters: Mapping[str, Any], width: int, height: int, seed: int, *, turbulence: bool
+    parameters: Mapping[str, Any],
+    width: int,
+    height: int,
+    seed: int,
+    *,
+    turbulence: bool,
+    context=None,
 ) -> np.ndarray:
     seed = int(seed) ^ int(parameters["seed"])
     cells_x = int(parameters["cells_x"])
@@ -98,6 +116,7 @@ def _periodic_fractal(
         offset_x=float(parameters["offset_x"]),
         offset_y=float(parameters["offset_y"]),
         turbulence=turbulence,
+        context=context,
     )
 
 
@@ -114,11 +133,14 @@ def _periodic_fractal_at(
     offset_x: float,
     offset_y: float,
     turbulence: bool,
+    context=None,
 ) -> np.ndarray:
     total = np.zeros(np.broadcast_shapes(np.shape(x), np.shape(y)), dtype=np.float32)
     amplitude = 1.0
     amplitude_sum = 0.0
     for octave in range(int(octaves)):
+        if context is not None:
+            context.check_cancelled()
         multiplier = lacunarity**octave
         octave_cells_x = cells_x * multiplier
         octave_cells_y = cells_y * multiplier
@@ -140,13 +162,15 @@ def _periodic_fractal_at(
 
 
 def seamless_fractal_noise(
-    _input, parameters: Mapping[str, Any], width: int, height: int, seed: int
+    _input, parameters: Mapping[str, Any], width: int, height: int, seed: int, context=None
 ):
-    return _periodic_fractal(parameters, width, height, seed, turbulence=False)
+    return _periodic_fractal(parameters, width, height, seed, turbulence=False, context=context)
 
 
-def seamless_turbulence(_input, parameters: Mapping[str, Any], width: int, height: int, seed: int):
-    return _periodic_fractal(parameters, width, height, seed, turbulence=True)
+def seamless_turbulence(
+    _input, parameters: Mapping[str, Any], width: int, height: int, seed: int, context=None
+):
+    return _periodic_fractal(parameters, width, height, seed, turbulence=True, context=context)
 
 
 def cellular(_input, parameters: Mapping[str, Any], width: int, height: int, seed: int):

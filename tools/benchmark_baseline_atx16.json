@@ -1,0 +1,176 @@
+[
+  {
+    "measurement": "simple_512.cold",
+    "seconds": 0.1582232000073418
+  },
+  {
+    "measurement": "simple_512.warm_identical",
+    "seconds": 0.15257520007435232
+  },
+  {
+    "measurement": "simple_512.single_layer_edit",
+    "seconds": 0.14828229998238385
+  },
+  {
+    "measurement": "simple_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "simple_512.opacity_only",
+    "seconds": 0.15162420005071908
+  },
+  {
+    "measurement": "simple_512.blend_only",
+    "seconds": 0.16025119996629655
+  },
+  {
+    "measurement": "simple_512.reorder",
+    "seconds": 0.16013879992533475
+  },
+  {
+    "measurement": "simple_512.visibility",
+    "seconds": 0.08270369993988425
+  },
+  {
+    "measurement": "procedural_heavy_512.cold",
+    "seconds": 4.334970099967904
+  },
+  {
+    "measurement": "procedural_heavy_512.warm_identical",
+    "seconds": 4.448989899945445
+  },
+  {
+    "measurement": "procedural_heavy_512.single_layer_edit",
+    "seconds": 4.472228299942799
+  },
+  {
+    "measurement": "procedural_heavy_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "procedural_heavy_512.opacity_only",
+    "seconds": 4.644929300062358
+  },
+  {
+    "measurement": "procedural_heavy_512.blend_only",
+    "seconds": 4.456079800031148
+  },
+  {
+    "measurement": "procedural_heavy_512.reorder",
+    "seconds": 4.50478150008712
+  },
+  {
+    "measurement": "procedural_heavy_512.visibility",
+    "seconds": 3.987266300013289
+  },
+  {
+    "measurement": "shared_mask_512.cold",
+    "seconds": 5.239869999932125
+  },
+  {
+    "measurement": "shared_mask_512.warm_identical",
+    "seconds": 4.489530600025319
+  },
+  {
+    "measurement": "shared_mask_512.single_layer_edit",
+    "seconds": 4.626163200009614
+  },
+  {
+    "measurement": "shared_mask_512.control_field_edit",
+    "seconds": 4.77696249994915
+  },
+  {
+    "measurement": "shared_mask_512.opacity_only",
+    "seconds": 4.9068542999448255
+  },
+  {
+    "measurement": "shared_mask_512.blend_only",
+    "seconds": 4.752326100016944
+  },
+  {
+    "measurement": "shared_mask_512.reorder",
+    "seconds": 4.6241390000795946
+  },
+  {
+    "measurement": "shared_mask_512.visibility",
+    "seconds": 3.9748435000656173
+  },
+  {
+    "measurement": "image_2048_to_512.cold",
+    "seconds": 0.352233299985528
+  },
+  {
+    "measurement": "image_2048_to_512.warm_identical",
+    "seconds": 0.3191188999917358
+  },
+  {
+    "measurement": "image_2048_to_512.single_layer_edit",
+    "seconds": 0.2862841999158263
+  },
+  {
+    "measurement": "image_2048_to_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "image_2048_to_512.opacity_only",
+    "seconds": 0.27641399996355176
+  },
+  {
+    "measurement": "image_2048_to_512.blend_only",
+    "seconds": 0.2929350999183953
+  },
+  {
+    "measurement": "image_2048_to_512.reorder",
+    "seconds": 0.30304000002797693
+  },
+  {
+    "measurement": "image_2048_to_512.visibility",
+    "seconds": 0.003377899993211031
+  },
+  {
+    "measurement": "image_repeat_2048_to_512",
+    "seconds": 0.34998949989676476
+  },
+  {
+    "measurement": "image_changed_on_disk",
+    "seconds": 0.1887464999454096
+  },
+  {
+    "measurement": "mixed_512.cold",
+    "seconds": 4.283223900012672
+  },
+  {
+    "measurement": "mixed_512.warm_identical",
+    "seconds": 4.435810500057414
+  },
+  {
+    "measurement": "mixed_512.single_layer_edit",
+    "seconds": 4.231355499941856
+  },
+  {
+    "measurement": "mixed_512.control_field_edit",
+    "seconds": 4.4567138000857085
+  },
+  {
+    "measurement": "mixed_512.opacity_only",
+    "seconds": 4.35982170002535
+  },
+  {
+    "measurement": "mixed_512.blend_only",
+    "seconds": 4.475066499901004
+  },
+  {
+    "measurement": "mixed_512.reorder",
+    "seconds": 4.246539899962954
+  },
+  {
+    "measurement": "mixed_512.visibility",
+    "seconds": 3.6700335999485105
+  },
+  {
+    "measurement": "burst.submit_A_B_C",
+    "seconds": 0.00352609995752573,
+    "latest_request_id": 3
+  }
+]
+

@@ -275,6 +275,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             ),
             Seamlessness.UNKNOWN,
             noise_generators.fractal_noise,
+            requires_render_context=True,
         ),
         OperationDefinition(
             "generator.turbulence",
@@ -327,6 +328,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             ),
             Seamlessness.UNKNOWN,
             noise_generators.turbulence,
+            requires_render_context=True,
         ),
         OperationDefinition(
             "generator.cellular",
@@ -530,6 +532,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             ),
             Seamlessness.INHERENT,
             noise_generators.seamless_fractal_noise,
+            requires_render_context=True,
         ),
         OperationDefinition(
             "generator.seamless_turbulence",
@@ -624,6 +627,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             ),
             Seamlessness.INHERENT,
             noise_generators.seamless_turbulence,
+            requires_render_context=True,
         ),
         OperationDefinition(
             "generator.seamless_cellular",

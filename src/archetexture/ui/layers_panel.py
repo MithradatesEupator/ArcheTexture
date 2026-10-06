@@ -178,12 +178,15 @@ class LayersPanel(QWidget):
             return
         identifier = str(item.data(Qt.ItemDataRole.UserRole))
         old_name, old_enabled = self._known.get(identifier, ("", False))
-        if item.text() and item.text() != old_name:
-            self.renameRequested.emit(identifier, item.text())
+        # Signals may synchronously rebuild the list and delete this item.
+        # Snapshot its state and update bookkeeping before emitting anything.
+        name = item.text()
         enabled = item.checkState() == Qt.CheckState.Checked
+        self._known[identifier] = (name, enabled)
+        if name and name != old_name:
+            self.renameRequested.emit(identifier, name)
         if enabled != old_enabled:
             self.enabledChanged.emit(identifier, enabled)
-        self._known[identifier] = (item.text(), enabled)
 
     def _duplicate(self) -> None:
         identifier = self._selected_id()

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from archetexture.core.assets import RenderContext
+from archetexture.core.cancellation import RenderCancelled
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.render.engine import RenderEngine, RenderResult
 from archetexture.render.request import RenderRequest
@@ -65,8 +66,10 @@ class RenderCoordinator:
                 self.active_request = request
                 launch = request
             else:
+                self.active_request.cancellation_token.cancel()
                 if self.pending_request is not None:
                     self._callbacks.pop(self.pending_request.request_id, None)
+                    self.pending_request.cancellation_token.cancel()
                 self.pending_request = request
                 launch = None
         if launch is not None:
@@ -75,14 +78,28 @@ class RenderCoordinator:
 
     def _launch(self, request: RenderRequest) -> None:
         kwargs = {"width": request.width, "height": request.height}
-        if request.render_context is not None:
-            kwargs["render_context"] = request.render_context
+        context = request.render_context or RenderContext()
+        if hasattr(self.engine, "session"):
+            context = context.with_runtime(
+                self.engine.session.asset_cache, request.cancellation_token
+            )
+            kwargs["render_context"] = context
+        else:
+            if request.render_context is not None:
+                context = RenderContext(
+                    context.project_path,
+                    context.asset_cache,
+                    request.cancellation_token,
+                )
+                kwargs["render_context"] = context
         future = self._executor.submit(self.engine.render, request.recipe, **kwargs)
         future.add_done_callback(lambda completed: self._finished(request, completed))
 
     def _finished(self, request: RenderRequest, future: Future[RenderResult]) -> None:
         try:
             outcome = RenderOutcome(request.request_id, result=future.result())
+        except RenderCancelled:
+            outcome = None
         except Exception as exc:  # Errors are delivered through the same UI-safe result path.
             outcome = RenderOutcome(request.request_id, error=exc)
 
@@ -97,7 +114,7 @@ class RenderCoordinator:
             if next_request is not None:
                 self.active_request = next_request
 
-        if is_latest:
+        if is_latest and outcome is not None:
             receiver = callback or self.on_complete
             if receiver is not None:
                 try:
@@ -112,6 +129,10 @@ class RenderCoordinator:
             if self._closed:
                 return
             self._closed = True
+            if self.active_request is not None:
+                self.active_request.cancellation_token.cancel()
+            if self.pending_request is not None:
+                self.pending_request.cancellation_token.cancel()
             self.pending_request = None
             self._callbacks.clear()
         self._executor.shutdown(wait=wait, cancel_futures=True)

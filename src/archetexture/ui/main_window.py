@@ -45,6 +45,8 @@ from archetexture.core.seamlessness import recipe_seamlessness
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
+from archetexture.render.engine import RenderEngine
+from archetexture.render.session import RenderSession
 from archetexture.ui.binding_dialog import BindingDialog
 from archetexture.ui.color_ramp_editor import ColorRampEditor
 from archetexture.ui.control_fields_editor import ControlFieldsEditor
@@ -77,13 +79,17 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._export_status_text: str | None = None
         self._latest_render_result = None
+        self.render_session = RenderSession()
         self._export_bridge = _ExportBridge(self)
         self.export_coordinator = ExportCoordinator(on_complete=self._export_bridge.completed.emit)
         self._export_bridge.completed.connect(
             self._on_export_complete, Qt.ConnectionType.QueuedConnection
         )
         self._render_bridge = _RenderBridge(self)
-        self.render_coordinator = RenderCoordinator(on_complete=self._render_bridge.completed.emit)
+        self.render_coordinator = RenderCoordinator(
+            engine=RenderEngine(session=self.render_session),
+            on_complete=self._render_bridge.completed.emit,
+        )
         self._render_bridge.completed.connect(
             self._on_render_complete,
             Qt.ConnectionType.QueuedConnection,
@@ -1265,6 +1271,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.new_document()
+        self.render_session.clear()
+        self._latest_render_result = None
+        self.viewport.set_error("Rendering…")
         self._selected_layer_id = recipe.layers[0].layer_id
         self._selected_instance_id = recipe.layers[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
@@ -1289,6 +1298,9 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.replace_with_project(candidate)
+        self.render_session.clear()
+        self._latest_render_result = None
+        self.viewport.set_error("Rendering…")
         self._selected_layer_id = recipe.layers[0].layer_id
         self._selected_instance_id = recipe.layers[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
@@ -1308,6 +1320,7 @@ class MainWindow(QMainWindow):
             return False
         if not destination.lower().endswith(".archetexture"):
             destination += ".archetexture"
+        previous_path = self.document.project_path
         try:
             self.document.save(destination)
         except Exception as exc:
@@ -1315,6 +1328,9 @@ class MainWindow(QMainWindow):
             return False
         self._update_title_and_actions()
         self.statusBar().showMessage(f"Saved {destination}", 3000)
+        if previous_path != self.document.project_path:
+            self.render_session.clear()
+            self._request_render()
         return True
 
     def closeEvent(self, event) -> None:
