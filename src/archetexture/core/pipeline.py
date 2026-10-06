@@ -7,6 +7,10 @@ import numpy as np
 
 from archetexture.core.assets import RenderContext
 from archetexture.core.control_fields import ControlFieldEvaluator
+from archetexture.core.dependencies import (
+    control_dependency_definitions,
+    control_field_dependencies,
+)
 from archetexture.core.fields import (
     RGBAField,
     ScalarField,
@@ -60,21 +64,28 @@ class _Evaluation:
         self.control_stack.add(identifier)
         try:
             cache_key = None
-            scalar = None
+            raw_scalar = None
             if self.session is not None and self.cache_enabled:
+                dependencies = control_dependency_definitions(
+                    self.recipe, control_field_dependencies(self.recipe, identifier)
+                )
+                self.render_context.check_cancelled()
                 cache_key = structural_fingerprint(
                     {
                         "control_id": identifier,
-                        "control": control,
-                        "control_fields": self.recipe.control_fields,
+                        # The persistent Control Field cache stores raw pipeline
+                        # output, before this field's optional global mapping.
+                        "control_content": (control.source, control.transforms),
+                        "dependencies": dependencies,
                         "width": self.width,
                         "height": self.height,
                         "seed": self.recipe.seed,
                     },
                     self.render_context,
                 )
-                scalar = self.session.control_cache.get(cache_key)
-            if scalar is None:
+                self.render_context.check_cancelled()
+                raw_scalar = self.session.control_cache.get(cache_key)
+            if raw_scalar is None:
                 self.render_context.check_cancelled()
                 raw = _evaluate_pipeline(
                     control.source,
@@ -82,10 +93,11 @@ class _Evaluation:
                     self,
                     self.recipe.seed,
                 )
-                scalar = validate_scalar_field(raw, name=f"control field {identifier}")
+                raw_scalar = validate_scalar_field(raw, name=f"control field {identifier}")
                 self.render_context.check_cancelled()
                 if cache_key is not None:
-                    self.session.control_cache.put(cache_key, scalar)
+                    self.session.control_cache.put(cache_key, raw_scalar)
+            scalar = raw_scalar
             if control.mapping is not None:
                 scalar = ControlFieldEvaluator.map_field(control.mapping, scalar)
             self.control_cache[identifier] = ensure_normalized_scalar(scalar)

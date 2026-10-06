@@ -7,6 +7,7 @@ from typing import Any
 
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.assets import AssetReference
+from archetexture.core.dependencies import iter_control_bindings
 from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.parameters import (
     ControlFieldBinding,
@@ -73,14 +74,7 @@ def _validate_mapping(
 
 
 def _walk_bindings(value: Any):
-    if isinstance(value, ControlFieldBinding):
-        yield value
-    elif isinstance(value, dict):
-        for item in value.values():
-            yield from _walk_bindings(item)
-    elif isinstance(value, (tuple, list)):
-        for item in value:
-            yield from _walk_bindings(item)
+    yield from iter_control_bindings(value)
 
 
 def _validate_parameter_value(

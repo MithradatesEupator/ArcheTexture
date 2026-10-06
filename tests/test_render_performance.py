@@ -184,12 +184,12 @@ def test_ramp_transform_mask_and_seed_changes_invalidate_render_dependencies():
     project.layers[0].mask = ControlFieldBinding("shared", ControlFieldMapping(invert=True))
     before = engine.session.stats["operation_executions"]
     engine.render(project)
-    assert engine.session.stats["operation_executions"] > before
+    assert engine.session.stats["operation_executions"] == before
 
     project.control_fields["shared"].source.parameters["scale"] += 0.4
     before = engine.session.stats["operation_executions"]
     engine.render(project)
-    assert engine.session.stats["operation_executions"] > before
+    assert engine.session.stats["operation_executions"] - before == 2
 
     project.seed += 1
     before = engine.session.stats["operation_executions"]

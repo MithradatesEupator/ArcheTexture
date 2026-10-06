@@ -17,7 +17,7 @@ import numpy as np
 from PIL import Image
 
 from archetexture.core.assets import AssetReference, RenderContext
-from archetexture.core.parameters import ControlFieldBinding
+from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
 from archetexture.core.recipe import (
     ControlFieldRecipe,
     LayerRecipe,
@@ -94,6 +94,107 @@ def timed(label: str, engine: RenderEngine, recipe: ProjectRecipe, context_facto
     started = time.perf_counter()
     engine.render(recipe, render_context=context_factory())
     return {"measurement": label, "seconds": time.perf_counter() - started}
+
+
+def _stats_snapshot(session: RenderSession) -> dict:
+    return session.stats
+
+
+def _stats_delta(before: dict, after: dict) -> dict:
+    return {
+        "layer_cache_hits": after["layers"]["hits"] - before["layers"]["hits"],
+        "layer_cache_misses": after["layers"]["misses"] - before["layers"]["misses"],
+        "control_cache_hits": after["controls"]["hits"] - before["controls"]["hits"],
+        "control_cache_misses": after["controls"]["misses"] - before["controls"]["misses"],
+        "operation_executions": after["operation_executions"] - before["operation_executions"],
+    }
+
+
+def _measure_edit(label: str, engine: RenderEngine, recipe: ProjectRecipe, project: Path) -> dict:
+    before = _stats_snapshot(engine.session)
+    result = timed(
+        label, engine, recipe, lambda: RenderContext(project, engine.session.asset_cache)
+    )
+    result.update(_stats_delta(before, _stats_snapshot(engine.session)))
+    return result
+
+
+def run_dependency_scenarios(project_path: Path) -> list[dict]:
+    rows = []
+
+    mask_only = procedural_scene(512, 512, shared_mask=True)
+    mask_session = RenderSession()
+    mask_engine = RenderEngine(session=mask_session)
+    rows.append(_measure_edit("dependency.mask_only.cold", mask_engine, mask_only, project_path))
+    rows.append(
+        _measure_edit("dependency.mask_only.warm_identical", mask_engine, mask_only, project_path)
+    )
+
+    mask_edit = copy.deepcopy(mask_only)
+    mask_edit.control_fields["shared"].source.parameters["scale"] += 0.25
+    rows.append(
+        _measure_edit("dependency.mask_only.control_edit", mask_engine, mask_edit, project_path)
+    )
+    mask_mapping_edit = copy.deepcopy(mask_edit)
+    mask_mapping_edit.layers[0].mask = ControlFieldBinding(
+        "shared", ControlFieldMapping(invert=True)
+    )
+    rows.append(
+        _measure_edit(
+            "dependency.mask_only.mapping_edit", mask_engine, mask_mapping_edit, project_path
+        )
+    )
+    opacity_edit = copy.deepcopy(mask_mapping_edit)
+    opacity_edit.layers[0].opacity = 0.6
+    rows.append(
+        _measure_edit("dependency.mask_only.opacity_edit", mask_engine, opacity_edit, project_path)
+    )
+    rows.append({"measurement": "dependency.mask_only.stats", "stats": mask_session.stats})
+
+    modulated = procedural_scene(512, 512)
+    modulated.control_fields["modulation"] = ControlFieldRecipe(
+        operation("generator.fractal_noise", "modulation-source", scale=2.5, octaves=5),
+        [operation("transform.blur", "modulation-blur", sigma=0.8)],
+    )
+    modulated.layers[0].source.parameters["scale"] = ControlFieldBinding(
+        "modulation", ControlFieldMapping(output_min=3.0, output_max=5.0)
+    )
+    mod_session = RenderSession()
+    mod_engine = RenderEngine(session=mod_session)
+    rows.append(_measure_edit("dependency.modulated.cold", mod_engine, modulated, project_path))
+    rows.append(
+        _measure_edit("dependency.modulated.warm_identical", mod_engine, modulated, project_path)
+    )
+    mod_edit = copy.deepcopy(modulated)
+    mod_edit.control_fields["modulation"].source.parameters["scale"] += 0.25
+    rows.append(
+        _measure_edit("dependency.modulated.control_edit", mod_engine, mod_edit, project_path)
+    )
+    rows.append({"measurement": "dependency.modulated.stats", "stats": mod_session.stats})
+
+    unrelated = procedural_scene(512, 512, shared_mask=True)
+    unrelated.control_fields["unused"] = ControlFieldRecipe(
+        operation("generator.fractal_noise", "unused-source", scale=1.7)
+    )
+    unrelated_session = RenderSession()
+    unrelated_engine = RenderEngine(session=unrelated_session)
+    rows.append(
+        _measure_edit("dependency.unrelated.cold", unrelated_engine, unrelated, project_path)
+    )
+    rows.append(
+        _measure_edit(
+            "dependency.unrelated.warm_identical", unrelated_engine, unrelated, project_path
+        )
+    )
+    unrelated_edit = copy.deepcopy(unrelated)
+    unrelated_edit.control_fields["unused"].source.parameters["scale"] += 0.25
+    rows.append(
+        _measure_edit(
+            "dependency.unrelated.control_edit", unrelated_engine, unrelated_edit, project_path
+        )
+    )
+    rows.append({"measurement": "dependency.unrelated.stats", "stats": unrelated_session.stats})
+    return rows
 
 
 def run_interactive_sequence(name: str, recipe: ProjectRecipe, project_path: Path) -> list[dict]:
@@ -221,6 +322,7 @@ def main() -> None:
         mixed = mixed_scene(512, 512, image)
         rows.extend(run_interactive_sequence("mixed_512", mixed, project))
         rows.append(run_burst(heavy))
+        rows.extend(run_dependency_scenarios(project))
     print(json.dumps(rows, indent=2))
 
 

@@ -6,6 +6,10 @@ import numpy as np
 
 from archetexture.core.assets import RenderContext
 from archetexture.core.cancellation import RenderCancelled
+from archetexture.core.dependencies import (
+    control_dependency_definitions,
+    layer_content_dependencies,
+)
 from archetexture.core.fields import (
     RGBAField,
     ScalarField,
@@ -78,6 +82,10 @@ class RenderEngine:
                 cache_key = None
                 cached = None
                 if use_cache:
+                    dependencies = control_dependency_definitions(
+                        recipe, layer_content_dependencies(layer)
+                    )
+                    context.check_cancelled()
                     cache_key = structural_fingerprint(
                         {
                             "width": output_width,
@@ -86,11 +94,11 @@ class RenderEngine:
                             "source": layer.source,
                             "transforms": layer.transforms,
                             "color_ramp": layer.color_ramp,
-                            "mask": layer.mask,
-                            "control_fields": recipe.control_fields,
+                            "control_dependencies": dependencies,
                         },
                         context,
                     )
+                    context.check_cancelled()
                     cached = self.session.layer_cache.get(cache_key)
                 if cached is not None:
                     rgba, scalar = cached

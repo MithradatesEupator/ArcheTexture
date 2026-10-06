@@ -1,0 +1,581 @@
+[
+  {
+    "measurement": "simple_512.cold",
+    "seconds": 0.16113439993932843
+  },
+  {
+    "measurement": "simple_512.warm_identical",
+    "seconds": 0.1377317999722436
+  },
+  {
+    "measurement": "simple_512.single_layer_edit",
+    "seconds": 0.14863219996914268
+  },
+  {
+    "measurement": "simple_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "simple_512.opacity_only",
+    "seconds": 0.15347170003224164
+  },
+  {
+    "measurement": "simple_512.blend_only",
+    "seconds": 0.1391423000022769
+  },
+  {
+    "measurement": "simple_512.reorder",
+    "seconds": 0.14444389997515827
+  },
+  {
+    "measurement": "simple_512.visibility",
+    "seconds": 0.07592079997994006
+  },
+  {
+    "measurement": "simple_512.diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 10,
+        "misses": 3,
+        "entries": 3,
+        "bytes": 15728640,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 3,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "procedural_heavy_512.cold",
+    "seconds": 4.810193899902515
+  },
+  {
+    "measurement": "procedural_heavy_512.warm_identical",
+    "seconds": 0.38111459999345243
+  },
+  {
+    "measurement": "procedural_heavy_512.single_layer_edit",
+    "seconds": 1.1272259000688791
+  },
+  {
+    "measurement": "procedural_heavy_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "procedural_heavy_512.opacity_only",
+    "seconds": 0.40954090002924204
+  },
+  {
+    "measurement": "procedural_heavy_512.blend_only",
+    "seconds": 0.3538245999952778
+  },
+  {
+    "measurement": "procedural_heavy_512.reorder",
+    "seconds": 0.380712499958463
+  },
+  {
+    "measurement": "procedural_heavy_512.visibility",
+    "seconds": 0.3518105000257492
+  },
+  {
+    "measurement": "procedural_heavy_512.diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 34,
+        "misses": 7,
+        "entries": 7,
+        "bytes": 36700160,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 14,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "shared_mask_512.cold",
+    "seconds": 5.1537956999382
+  },
+  {
+    "measurement": "shared_mask_512.warm_identical",
+    "seconds": 0.37790449999738485
+  },
+  {
+    "measurement": "shared_mask_512.single_layer_edit",
+    "seconds": 0.9182234000181779
+  },
+  {
+    "measurement": "shared_mask_512.control_field_edit",
+    "seconds": 0.9988381000002846
+  },
+  {
+    "measurement": "shared_mask_512.opacity_only",
+    "seconds": 0.4033764998894185
+  },
+  {
+    "measurement": "shared_mask_512.blend_only",
+    "seconds": 0.36412809998728335
+  },
+  {
+    "measurement": "shared_mask_512.reorder",
+    "seconds": 0.3524023999925703
+  },
+  {
+    "measurement": "shared_mask_512.visibility",
+    "seconds": 0.3191946001024917
+  },
+  {
+    "measurement": "shared_mask_512.diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 40,
+        "misses": 7,
+        "entries": 7,
+        "bytes": 36700160,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 6,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 2097152,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 18,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "image_2048_to_512.cold",
+    "seconds": 0.30027240002527833
+  },
+  {
+    "measurement": "image_2048_to_512.warm_identical",
+    "seconds": 0.053551999968476593
+  },
+  {
+    "measurement": "image_2048_to_512.single_layer_edit",
+    "seconds": 0.09830009995494038
+  },
+  {
+    "measurement": "image_2048_to_512.control_field_edit",
+    "seconds": null
+  },
+  {
+    "measurement": "image_2048_to_512.opacity_only",
+    "seconds": 0.05650700000114739
+  },
+  {
+    "measurement": "image_2048_to_512.blend_only",
+    "seconds": 0.059656099998392165
+  },
+  {
+    "measurement": "image_2048_to_512.reorder",
+    "seconds": 0.0562134999781847
+  },
+  {
+    "measurement": "image_2048_to_512.visibility",
+    "seconds": 0.0023532999912276864
+  },
+  {
+    "measurement": "image_2048_to_512.diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 4,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 8388608,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 1,
+        "misses": 1,
+        "decodes": 1,
+        "entries": 1,
+        "bytes": 16777216,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 2,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "image_repeat_cold_2048_to_512",
+    "seconds": 0.32454439997673035
+  },
+  {
+    "measurement": "image_repeat_warm_2048_to_512",
+    "seconds": 0.05814450001344085
+  },
+  {
+    "measurement": "image_repeat_diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 1,
+        "misses": 1,
+        "entries": 1,
+        "bytes": 4194304,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 1,
+        "decodes": 1,
+        "entries": 1,
+        "bytes": 16777216,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 1,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "image_changed_on_disk",
+    "seconds": 0.1729609000030905
+  },
+  {
+    "measurement": "image_changed_diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 1,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 8388608,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 2,
+        "decodes": 2,
+        "entries": 1,
+        "bytes": 16777216,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 2,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "mixed_512.cold",
+    "seconds": 3.8471248999703676
+  },
+  {
+    "measurement": "mixed_512.warm_identical",
+    "seconds": 0.3716013999655843
+  },
+  {
+    "measurement": "mixed_512.single_layer_edit",
+    "seconds": 0.43640609993599355
+  },
+  {
+    "measurement": "mixed_512.control_field_edit",
+    "seconds": 0.9200981999747455
+  },
+  {
+    "measurement": "mixed_512.opacity_only",
+    "seconds": 0.37942709994968027
+  },
+  {
+    "measurement": "mixed_512.blend_only",
+    "seconds": 0.3761953000212088
+  },
+  {
+    "measurement": "mixed_512.reorder",
+    "seconds": 0.3727426999248564
+  },
+  {
+    "measurement": "mixed_512.visibility",
+    "seconds": 0.3329882000107318
+  },
+  {
+    "measurement": "mixed_512.diagnostics",
+    "stats": {
+      "layers": {
+        "hits": 40,
+        "misses": 7,
+        "entries": 7,
+        "bytes": 34603008,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 1,
+        "misses": 1,
+        "decodes": 1,
+        "entries": 1,
+        "bytes": 16777216,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 6,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 2097152,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 20,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "burst_A_B_C_latest_completion",
+    "submit_seconds": 0.0041813000570982695,
+    "seconds": 3.9799245999893174,
+    "latest_request_id": 3,
+    "published_request_ids": [
+      3
+    ],
+    "layer_cache": {
+      "hits": 0,
+      "misses": 7,
+      "entries": 6,
+      "bytes": 31457280,
+      "max_bytes": 234881024
+    },
+    "operation_executions": 13,
+    "cancellations": 1
+  },
+  {
+    "measurement": "dependency.mask_only.cold",
+    "seconds": 4.332364200032316,
+    "layer_cache_hits": 0,
+    "layer_cache_misses": 6,
+    "control_cache_hits": 0,
+    "control_cache_misses": 1,
+    "operation_executions": 14
+  },
+  {
+    "measurement": "dependency.mask_only.warm_identical",
+    "seconds": 0.3876139000058174,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 1,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.mask_only.control_edit",
+    "seconds": 0.8691833999473602,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 0,
+    "control_cache_misses": 1,
+    "operation_executions": 2
+  },
+  {
+    "measurement": "dependency.mask_only.mapping_edit",
+    "seconds": 0.34736859996337444,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 1,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.mask_only.opacity_edit",
+    "seconds": 0.38698690000455827,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 1,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.mask_only.stats",
+    "stats": {
+      "layers": {
+        "hits": 24,
+        "misses": 6,
+        "entries": 6,
+        "bytes": 31457280,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 3,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 2097152,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 16,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "dependency.modulated.cold",
+    "seconds": 4.345844499999657,
+    "layer_cache_hits": 0,
+    "layer_cache_misses": 6,
+    "control_cache_hits": 0,
+    "control_cache_misses": 1,
+    "operation_executions": 14
+  },
+  {
+    "measurement": "dependency.modulated.warm_identical",
+    "seconds": 0.3750542999478057,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 0,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.modulated.control_edit",
+    "seconds": 1.5493866000324488,
+    "layer_cache_hits": 5,
+    "layer_cache_misses": 1,
+    "control_cache_hits": 0,
+    "control_cache_misses": 1,
+    "operation_executions": 4
+  },
+  {
+    "measurement": "dependency.modulated.stats",
+    "stats": {
+      "layers": {
+        "hits": 11,
+        "misses": 7,
+        "entries": 7,
+        "bytes": 36700160,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 0,
+        "misses": 2,
+        "entries": 2,
+        "bytes": 2097152,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 18,
+      "cancellations": 0
+    }
+  },
+  {
+    "measurement": "dependency.unrelated.cold",
+    "seconds": 4.578731499961577,
+    "layer_cache_hits": 0,
+    "layer_cache_misses": 6,
+    "control_cache_hits": 0,
+    "control_cache_misses": 1,
+    "operation_executions": 14
+  },
+  {
+    "measurement": "dependency.unrelated.warm_identical",
+    "seconds": 0.375080700032413,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 1,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.unrelated.control_edit",
+    "seconds": 0.3928630999289453,
+    "layer_cache_hits": 6,
+    "layer_cache_misses": 0,
+    "control_cache_hits": 1,
+    "control_cache_misses": 0,
+    "operation_executions": 0
+  },
+  {
+    "measurement": "dependency.unrelated.stats",
+    "stats": {
+      "layers": {
+        "hits": 12,
+        "misses": 6,
+        "entries": 6,
+        "bytes": 31457280,
+        "max_bytes": 234881024
+      },
+      "assets": {
+        "hits": 0,
+        "misses": 0,
+        "decodes": 0,
+        "entries": 0,
+        "bytes": 0,
+        "max_bytes": 134217728
+      },
+      "controls": {
+        "hits": 2,
+        "misses": 1,
+        "entries": 1,
+        "bytes": 1048576,
+        "max_bytes": 33554432
+      },
+      "operation_executions": 14,
+      "cancellations": 0
+    }
+  }
+]

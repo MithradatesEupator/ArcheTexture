@@ -1,15 +1,13 @@
 from __future__ import annotations
 
+from archetexture.core.dependencies import instance_dependencies
 from archetexture.core.operations import OperationDefinitionSet, OperationType, Seamlessness
-from archetexture.core.parameters import ControlFieldBinding
 from archetexture.core.recipe import LayerRecipe, OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
 
 
 def _has_spatial_binding(instance: OperationInstance) -> bool:
-    return isinstance(instance.influence, ControlFieldBinding) or any(
-        isinstance(value, ControlFieldBinding) for value in instance.parameters.values()
-    )
+    return bool(instance_dependencies(instance))
 
 
 def _wrap_capable_state(instance: OperationInstance, operation_type: OperationType) -> bool | None:
