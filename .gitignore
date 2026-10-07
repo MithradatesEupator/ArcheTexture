@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.package-venv/
+.tmp-atx18/
 .eggs/
 build/
 dist/

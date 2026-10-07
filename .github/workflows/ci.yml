@@ -14,6 +14,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -34,3 +36,68 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest
+      - name: pip check
+        run: python -m pip check
+      - name: Whitespace check for pull request changes
+        if: github.event_name == 'pull_request'
+        run: git diff --check ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+      - name: Whitespace check for pushed commit
+        if: github.event_name == 'push'
+        run: git diff --check HEAD^ HEAD
+
+  package-install:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux Qt runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1
+      - name: Install build and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Install wheel in clean virtual environment
+        run: |
+          python -m venv .package-venv
+          .package-venv/bin/python -m pip install dist/archetexture-*.whl
+          .package-venv/bin/python -m pip check
+      - name: Exercise installed package and both application entry points
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: .package-venv/bin/python tools/package_acceptance.py
+
+  windows-desktop:
+    needs: [test, package-install]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install package and build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[dev]"
+      - name: Build Windows portable directory bundle
+        run: >-
+          python -m PyInstaller --noconfirm --clean
+          --distpath dist --workpath build/pyinstaller
+          ArcheTexture-0.1.0-windows-x86_64.spec
+      - name: Smoke-test frozen GUI outside the checkout
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/smoke_windows_bundle.py
+      - name: Upload Windows release-candidate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArcheTexture-0.1.0-windows-x86_64
+          path: dist/ArcheTexture-0.1.0-windows-x86_64/
+          if-no-files-found: error
+          retention-days: 30

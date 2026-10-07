@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from archetexture import __version__
 from archetexture.color.ramp import ColorRamp
 from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.document import DocumentController
@@ -206,6 +207,9 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         edit_menu = self.menuBar().addMenu("&Edit")
         view_menu = self.menuBar().addMenu("&View")
+        help_menu = self.menuBar().addMenu("&Help")
+        self.about_action = help_menu.addAction("About ArcheTexture")
+        self.about_action.triggered.connect(self._show_about)
         appearance_menu = view_menu.addMenu("&Appearance")
         self.new_action = file_menu.addAction("&New")
         self.open_action = file_menu.addAction("&Open…")
@@ -263,6 +267,16 @@ class MainWindow(QMainWindow):
         self.project_status_label.setMargin(4)
         self.project_status_label.setToolTip("Current project canvas size and global seed")
         self.statusBar().addPermanentWidget(self.project_status_label)
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About ArcheTexture",
+            f"<b>ArcheTexture {__version__}</b><br>"
+            "Procedural texture generation and transformation workstation.<br>"
+            '<a href="https://github.com/MithradatesEupator/ArcheTexture">'
+            "Project repository</a>",
+        )
 
     def _configure_theme(self) -> None:
         if not hasattr(self._application, "_archetexture_system_style_name"):
@@ -1349,6 +1363,14 @@ def build_main_window(recipe: ProjectRecipe | None = None) -> MainWindow:
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
-    window = build_main_window()
+    try:
+        window = build_main_window()
+    except Exception as exc:
+        QMessageBox.critical(
+            None,
+            "ArcheTexture startup failed",
+            f"The main window could not be initialized.\n\n{exc}",
+        )
+        return 1
     window.show()
     return app.exec()

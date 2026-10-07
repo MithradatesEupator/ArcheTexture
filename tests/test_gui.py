@@ -16,11 +16,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from archetexture import __version__
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.operations import OperationDefinition, OperationType, Seamlessness
 from archetexture.core.parameters import ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.ui import main_window
 from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.main_window import build_main_window
 
@@ -66,6 +68,32 @@ def test_workbench_shows_pipeline_properties_and_rendered_viewport(workbench):
     assert workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value") is not None
     assert workbench.viewport.rendered_field.shape == (32, 48, 4)
     assert workbench.viewport.rendered_field.dtype == np.float32
+
+
+def test_about_action_shows_canonical_version_and_repository(workbench, monkeypatch):
+    shown = []
+    monkeypatch.setattr(QMessageBox, "about", lambda *args: shown.append(args))
+
+    workbench.about_action.trigger()
+
+    assert shown[0][0] is workbench
+    assert shown[0][1] == "About ArcheTexture"
+    assert __version__ in shown[0][2]
+    assert "github.com/MithradatesEupator/ArcheTexture" in shown[0][2]
+
+
+def test_startup_initialization_failure_is_shown_to_desktop_user(monkeypatch):
+    shown = []
+
+    def fail_startup():
+        raise RuntimeError("Qt initialization detail")
+
+    monkeypatch.setattr(main_window, "build_main_window", fail_startup)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: shown.append(args))
+
+    assert main_window.main() == 1
+    assert shown[0][1] == "ArcheTexture startup failed"
+    assert "Qt initialization detail" in shown[0][2]
 
 
 @pytest.mark.parametrize("dirty", [False, True])

@@ -1,161 +1,94 @@
 # ArcheTexture
 
-ArcheTexture is an early-development procedural texture workstation. It uses a
-layered recipe to generate scalar fields, apply transforms, composite layers,
-and display the result as RGBA pixels. The desktop workflow is functional and
-covered by automated tests, but the project is not release-ready.
+ArcheTexture is an early-development desktop workstation for building
+procedural textures from editable layers. It combines generators, transforms,
+masks, color ramps, and parameter modulation in a project that can be saved as
+readable JSON and exported as PNG.
 
-## Current workflow
+## What it can do
 
-- Start with a colorized, layered Fractal Noise composition.
-- Choose from constant, gradient, noise, periodic noise, cellular, bands, and
-  checker/grid sources.
-- Add, configure, enable, disable, reorder, and remove tonal, spatial, and
-  detail transforms.
-- Inspect the viewport in Single, Tile 3×3, or Seam Check mode. These are
-  presentation modes and do not change the project recipe or PNG output.
-- Render on a background worker while the Qt interface remains responsive.
-- Undo and redo recipe edits.
-- Save and reopen human-readable `.archetexture` JSON project files.
-- Export the current recipe snapshot as a lossless 8-bit RGBA PNG at the
-  project dimensions or an independently chosen size from 1 to 8192 pixels.
-- Keep normalized float32 scalar output for computation and apply the optional
-  color ramp at the RGBA display boundary. Display and PNG output share the
-  same clipped, rounded 8-bit channel conversion.
+- Build a procedural layer stack with opacity, blend modes, and ordered
+  transforms.
+- Use noise, patterns, cellular, image, and seamless generators.
+- Color scalar fields with editable ramps; generate tangent-space normal maps
+  from height fields.
+- Reuse Control Fields to modulate compatible parameters and transform
+  influence; use procedural or image-derived layer masks.
+- Preview a single tile, a 3×3 tile view, or a seam check.
+- Import external images, keep project-relative references, and save or reopen
+  `.archetexture` project files.
+- Undo and redo edits, choose project dimensions and a global seed, and export
+  lossless RGBA PNGs.
+- Render asynchronously with dependency-aware caches. Choose dark, light, or
+  system appearance.
 
-Control fields are reusable scalar recipes with a generator source, ordered
-transform chain, and optional normalized global mapping. Create and manage them
-in the Control Fields tab, then bind them to compatible numeric parameters or
-transform Influence from Properties. Each binding has its own output range,
-invert, curve, and optional quantization settings. Rename updates references;
-deletion is blocked while a field is in use. Cyclic control-field references
-are rejected before a document edit is committed. Nested control-field
-references can be edited through the same property controls, but there is no
-dependency-graph view or standalone control-field preview. The graphical
-color-ramp editor remains beneath the main viewport. The selected viewport
-mode is an application preference and remains selected when creating or
-opening projects.
+The interface is organized around a layer and transform workspace, a central
+texture viewport and color ramp, and Properties or Control Fields tabs.
 
-## Seamless synthesis
+## Running ArcheTexture
 
-Seamless Value Noise, Seamless Fractal Noise, Seamless Turbulence, and Seamless
-Cellular generate periodic scalar fields. Their integer Cells X and Cells Y
-parameters define the tile's lattice period independently of output resolution.
-Fractal and turbulence octaves multiply both periods by an integer lacunarity
-(2, 3, or 4), so every octave remains periodic. Cellular feature hashes wrap
-by those cell periods and distance search considers neighboring periodic cell
-images. Existing non-seamless generators retain their original behavior.
+ArcheTexture requires Python 3.12 or later. A Windows portable build is created
+as a release-candidate artifact by CI; it is not yet a signed installer or a
+formal GitHub Release. Downloadable builds should be treated as experimental.
 
-Tile 3×3 draws the already-rendered tile nine times. Seam Check shifts the
-display by half the tile width and height, bringing the original boundaries to
-the center for visual inspection. Neither mode changes the render, saved
-recipe, or single-tile PNG export.
+To run from source, create and activate a virtual environment, then install the
+application:
 
-The `Seamless: Yes / No / Unknown` indicator is conservative. It combines
-enabled, visible layers and their transform metadata; Checker / Grid is
-conditional (grid lines repeat, while checker cells require even counts on
-both axes). Spatially modulated parameters and operations with unknown
-behavior prevent a Yes result. This indicator is advisory; the procedural
-sampling functions are covered by numeric periodicity tests. Not every source
-or operation is seamless, and native/manual Windows acceptance remains
-separate from the automated test suite.
-
-PNG export preserves alpha and writes atomically, replacing an existing file
-only after a complete image is ready. PNG is the only image export format. No
-gamma conversion or color profile management is applied. Dimensions above
-4096 pixels produce a warning in the export dialog.
-
-## Height to Normal
-
-Append the **Height to Normal** output transform after a scalar source and any
-scalar transforms to generate a tangent-space RGBA normal map. Strength scales
-the height slope per normalized texture coordinate, so its normal directions
-stay consistent when render resolution changes. OpenGL encodes increasing
-image-row height toward positive Y (green above 0.5); DirectX flips only that
-green direction. Wrap samples opposite edges and preserves a proven periodic
-input; Clamp replicates edge samples and cannot guarantee a seamless result.
-Remove a layer's color ramp before adding Height to Normal, because ramps
-operate on scalar output. Normal-map layers use the existing generic layer
-blend modes as visual color compositing; those modes are not physically correct
-normal-vector blending. Export remains ordinary RGBA PNG.
-
-## Run the application
-
-Use Python 3.12 or later:
-
-```bash
+```powershell
 python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install .
+archetexture
 ```
 
-Activate the environment, then install and launch:
+The module invocation is also supported: `python -m archetexture`. On Linux or
+macOS, activate with `source .venv/bin/activate`. The application is a local
+desktop program and does not need network access for normal operation.
 
-```bash
-python -m pip install -e '.[dev]'
+## Developer setup
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
 python -m archetexture
 ```
 
-On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`; on
-Linux/macOS, use `source .venv/bin/activate`. The application selects the
-platform's normal Qt display backend. Headless testing configures Qt offscreen
-through the test setup and CI environment.
+Run the quality checks with:
 
-## Development checks
-
-```bash
+```text
 ruff check .
 ruff format --check .
 python -m pytest
+python -m pip check
 ```
 
-Continuous integration runs these checks on Ubuntu and Windows with Python
-3.12.
+Package installation and build instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+CI tests Python 3.12 on Ubuntu and Windows, and validates built packages.
 
-## Architecture
+## Projects and assets
 
-- The declarative `ProjectRecipe` is the document. Render buffers, Qt widgets,
-  and worker state are derived runtime data and are never saved in a project.
-- Operation registrations connect stable IDs and versions, parameter and field
-  metadata, seamlessness declarations, and implementation callables.
-- The pipeline executes the registered implementations in source-to-transform
-  order. Generators and transforms live outside the orchestration layer.
-- Control fields use named references and the same operation pipeline; cycles
-  and incompatible references are rejected during validation.
-- A single background render worker coalesces pending work and publishes only
-  the newest request result or error.
-- History stores deep recipe snapshots, so edits cannot mutate older states and
-  edits after undo discard the old redo branch.
-- Project files use explicit schema-versioned JSON encoding and reconstruct
-  domain objects on load.
+Project files are JSON documents with an explicit schema version. The current
+format is schema v4; versions v1, v2, and v3 migrate when opened. Render buffers
+and worker state are derived and are not saved. Images remain external assets:
+references can be absolute or relative to the project file, so a project and
+its asset directory can be moved together. Image pixels are not embedded in
+project files.
 
-## Image assets
+## Development status and limitations
 
-The Image generator produces RGBA fields; Image Channel produces a scalar from
-red, green, blue, alpha, or Rec. 709 luminance. Extract Channel converts an RGBA
-pipeline field to scalar. Images are EXIF-oriented on decode and preserve source
-alpha. Fit modes are Stretch, Contain, Cover, and Tile, with Nearest, Bilinear,
-Bicubic, or Lanczos resampling. Contain pads with transparent pixels.
+Version 0.1.0 is an early development candidate. Some generators and operations
+are not seamless, and the seam status is advisory. Normal-map layers use the
+regular image blend modes, which do not perform physically correct vector
+blending. ArcheTexture does not include a node editor, GPU acceleration,
+material-channel workflow, professional color management, or a general-purpose
+installer. The project currently has no license file; public availability does
+not itself grant permission to use, modify, or redistribute the code.
 
-Image references are stored as either absolute paths or paths relative to the
-project file. Relative references resolve beside the project, so moving a
-project together with its asset directory preserves the link. Missing files do
-not prevent project loading; rendering reports a path-specific error and image
-parameters offer a relink action. A runtime-only cache holds up to eight
-decoded images and keys entries by path, file size, and modification time; no
-image pixels are embedded in the project document.
+Runtime dependencies are NumPy, Pillow, and PySide6. Development and build
+tools are optional dependencies, not runtime requirements. The project uses
+minimum version constraints and does not yet have a lockfile. There is no
+telemetry, analytics, update checker, cloud sync, or network service.
 
-Use **File → Import Image as Layer** to create a regular image-backed layer, or
-**Image Mask…** in the Layers panel to attach an image-derived control field as
-a mask. Existing projects from schemas v1 through v3 migrate to schema v4 when
-loaded and are written as v4 when saved.
-
-## Dependency policy and limitations
-
-Runtime and development dependencies are declared in `pyproject.toml`. There is
-no lockfile; installs resolve versions allowed by the declared minimum ranges.
-Dependency locking is deferred to a dedicated packaging phase rather than
-adding another packaging system in this work.
-
-ArcheTexture remains in early development. Non-periodic generators and
-operations with unknown seamlessness can still introduce visible boundaries;
-the status indicator does not attempt to prove cancellation between such
-operations. There is no node graph, GPU acceleration, or packaged installer.
+See [CHANGELOG.md](CHANGELOG.md) for a short feature history and
+[SECURITY.md](SECURITY.md) for reporting security issues.

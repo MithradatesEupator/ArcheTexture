@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "archetexture"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Procedural texture generation and transformation workstation"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,12 +13,29 @@ dependencies = [
   "Pillow>=10.0",
   "PySide6>=6.6",
 ]
+keywords = ["procedural-textures", "texture-generation", "image-processing", "PySide6"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: X11 Applications :: Qt",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.urls]
+Repository = "https://github.com/MithradatesEupator/ArcheTexture"
+Issues = "https://github.com/MithradatesEupator/ArcheTexture/issues"
 
 [project.optional-dependencies]
 dev = [
+  "build>=1.2",
   "pytest>=8.0",
   "pytest-qt>=4.0",
   "ruff>=0.6",
+  "pyinstaller>=6.10; platform_system == 'Windows'",
 ]
 
 [project.scripts]
@@ -26,6 +43,9 @@ archetexture = "archetexture.__main__:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.dynamic]
+version = {attr = "archetexture._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
