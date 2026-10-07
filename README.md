@@ -27,9 +27,9 @@ texture viewport and color ramp, and Properties or Control Fields tabs.
 
 ## Running ArcheTexture
 
-ArcheTexture requires Python 3.12 or later. A Windows portable build is created
-as a release-candidate artifact by CI; it is not yet a signed installer or a
-formal GitHub Release. Downloadable builds should be treated as experimental.
+ArcheTexture requires Python 3.12 or later. This branch prepares the 0.1.0
+initial public alpha; the Windows portable candidate is built by CI. It is not
+a signed installer. Treat alpha builds as experimental.
 
 To run from source, create and activate a virtual environment, then install the
 application:
@@ -77,13 +77,27 @@ project files.
 
 ## Development status and limitations
 
-Version 0.1.0 is an early development candidate. Some generators and operations
+Version 0.1.0 is an early development alpha. Some generators and operations
 are not seamless, and the seam status is advisory. Normal-map layers use the
 regular image blend modes, which do not perform physically correct vector
 blending. ArcheTexture does not include a node editor, GPU acceleration,
 material-channel workflow, professional color management, or a general-purpose
-installer. The project currently has no license file; public availability does
-not itself grant permission to use, modify, or redistribute the code.
+installer.
+
+## License
+
+ArcheTexture is distributed under the GNU General Public License version 3.0
+only (`GPL-3.0-only`); see [LICENSE](LICENSE). The GPL permits commercial use
+under its terms. Using ArcheTexture to create an image does not, by itself,
+automatically place that generated image under the GPL; the GPL governs
+ArcheTexture and derivatives within the license's scope, and image rights may
+also depend on incorporated material and other applicable rules.
+
+Organizations that need rights the GPL does not grant, such as proprietary
+redistribution of ArcheTexture or incorporating its code into a distributed
+closed-source derivative, may contact the copyright holder to discuss a
+separate commercial license. This is an optional, separately negotiated
+arrangement; no prices or terms are published here.
 
 Runtime dependencies are NumPy, Pillow, and PySide6. Development and build
 tools are optional dependencies, not runtime requirements. The project uses

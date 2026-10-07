@@ -3,7 +3,11 @@ name: CI
 on:
   push:
     branches: ["**"]
+    tags: ["v*"]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -42,7 +46,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git diff --check ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
       - name: Whitespace check for pushed commit
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
         run: git diff --check HEAD^ HEAD
 
   package-install:
@@ -94,10 +98,53 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python tools/smoke_windows_bundle.py
+      - name: Create portable ZIP and SHA-256 checksum
+        shell: pwsh
+        run: |
+          $archive = 'dist/ArcheTexture-0.1.0-windows-x86_64.zip'
+          Compress-Archive -Path 'dist/ArcheTexture-0.1.0-windows-x86_64/*' -DestinationPath $archive -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  ArcheTexture-0.1.0-windows-x86_64.zip" | Set-Content -LiteralPath "$archive.sha256" -Encoding ascii
       - name: Upload Windows release-candidate artifact
         uses: actions/upload-artifact@v4
         with:
           name: ArcheTexture-0.1.0-windows-x86_64
-          path: dist/ArcheTexture-0.1.0-windows-x86_64/
+          path: |
+            dist/ArcheTexture-0.1.0-windows-x86_64.zip
+            dist/ArcheTexture-0.1.0-windows-x86_64.zip.sha256
           if-no-files-found: error
           retention-days: 30
+
+  publish-release:
+    needs: windows-desktop
+    if: github.event_name == 'push' && github.ref == 'refs/tags/v0.1.0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: ArcheTexture-0.1.0-windows-x86_64
+          path: release-assets
+      - name: Verify release artifact and mainline ancestry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd release-assets
+          sha256sum --check ArcheTexture-0.1.0-windows-x86_64.zip.sha256
+          cd ..
+          git fetch origin main
+          git merge-base --is-ancestor "$(git rev-parse 'refs/tags/v0.1.0^{commit}')" origin/main
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          gh release create v0.1.0
+          release-assets/ArcheTexture-0.1.0-windows-x86_64.zip
+          release-assets/ArcheTexture-0.1.0-windows-x86_64.zip.sha256
+          --title "ArcheTexture 0.1.0"
+          --notes-file .github/release-notes-0.1.0.md
+          --verify-tag

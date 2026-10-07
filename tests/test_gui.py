@@ -79,6 +79,9 @@ def test_about_action_shows_canonical_version_and_repository(workbench, monkeypa
     assert shown[0][0] is workbench
     assert shown[0][1] == "About ArcheTexture"
     assert __version__ in shown[0][2]
+    assert "GNU General Public License version 3.0 only" in shown[0][2]
+    assert "GPL-3.0-only" in shown[0][2]
+    assert "gnu.org/licenses/gpl-3.0.html" in shown[0][2]
     assert "github.com/MithradatesEupator/ArcheTexture" in shown[0][2]
 
 

@@ -274,8 +274,9 @@ class MainWindow(QMainWindow):
             "About ArcheTexture",
             f"<b>ArcheTexture {__version__}</b><br>"
             "Procedural texture generation and transformation workstation.<br>"
-            '<a href="https://github.com/MithradatesEupator/ArcheTexture">'
-            "Project repository</a>",
+            "GNU General Public License version 3.0 only (GPL-3.0-only).<br>"
+            '<a href="https://www.gnu.org/licenses/gpl-3.0.html">License text</a><br>'
+            '<a href="https://github.com/MithradatesEupator/ArcheTexture">Project repository</a>',
         )
 
     def _configure_theme(self) -> None:

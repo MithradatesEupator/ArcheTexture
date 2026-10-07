@@ -29,3 +29,16 @@ both invalidation and reuse.
 Work on a focused branch based on the current project branch. Avoid committing
 generated builds, local environments, caches, or benchmark output unless a
 specific artifact is intentionally part of the change.
+
+## Interim contribution policy
+
+Bug reports, feature requests, technical discussion, and testing reports are
+welcome. At this stage, outside pull requests containing copyrightable code,
+documentation, artwork, or other substantive contributed material will not be
+merged until an explicit contributor-rights arrangement compatible with the
+project's dual-licensing strategy has been established. ArcheTexture is publicly
+licensed under GPL-3.0-only, while the project owner wishes to preserve the
+option of separately negotiated commercial licenses. This policy avoids
+implying that contributors have granted rights needed for that separate
+licensing. No copyright assignment or contributor agreement is being adopted
+here.

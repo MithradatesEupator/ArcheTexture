@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -19,11 +21,37 @@ from archetexture.export.image_export import ImageExporter
 from archetexture.render.engine import RenderEngine
 
 
-def _assert_wheel_contents(dist: Path) -> None:
+def _assert_distribution_licenses(dist: Path, repo: Path) -> None:
     wheels = list(dist.glob("archetexture-*.whl"))
     sdists = list(dist.glob("archetexture-*.tar.gz"))
     assert len(wheels) == 1, f"Expected one wheel in {dist}, found {len(wheels)}"
     assert len(sdists) == 1, f"Expected one source archive in {dist}, found {len(sdists)}"
+    license_bytes = (repo / "LICENSE").read_bytes()
+    metadata = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert metadata["license"] == "GPL-3.0-only"
+    assert metadata["license-files"] == ["LICENSE"]
+
+    with tarfile.open(sdists[0], "r:gz") as source:
+        license_members = [member for member in source.getnames() if member.endswith("/LICENSE")]
+        assert len(license_members) == 1
+        assert source.extractfile(license_members[0]).read() == license_bytes
+
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        names = wheel.namelist()
+        info_dir = next(
+            name.split("/")[0] for name in names if name.endswith(".dist-info/METADATA")
+        )
+        license_path = f"{info_dir}/licenses/LICENSE"
+        assert license_path in names
+        assert wheel.read(license_path) == license_bytes
+        package_metadata = wheel.read(f"{info_dir}/METADATA").decode("utf-8")
+        assert "License-Expression: GPL-3.0-only" in package_metadata
+        assert "License-File: LICENSE" in package_metadata
+
+
+def _assert_wheel_contents(dist: Path) -> None:
+    wheels = list(dist.glob("archetexture-*.whl"))
+    assert len(wheels) == 1, f"Expected one wheel in {dist}, found {len(wheels)}"
     with zipfile.ZipFile(wheels[0]) as wheel:
         names = wheel.namelist()
         assert "archetexture/__main__.py" in names
@@ -55,6 +83,10 @@ def main() -> int:
     repo = Path(__file__).resolve().parents[1]
     dist = Path(os.environ.get("ARCHETEXTURE_DIST_DIR", repo / "dist"))
     _assert_wheel_contents(dist)
+    _assert_distribution_licenses(dist, repo)
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    assert "GPL-3.0-only" in readme
+    assert "GPL-3.0-or-later" not in readme
     assert archetexture.__version__ == "0.1.0"
     assert "site-packages" in str(Path(archetexture.__file__).resolve()).lower()
 
