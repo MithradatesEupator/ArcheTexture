@@ -27,9 +27,10 @@ texture viewport and color ramp, and Properties or Control Fields tabs.
 
 ## Running ArcheTexture
 
-ArcheTexture requires Python 3.12 or later. This branch prepares the 0.1.0
-initial public alpha; the Windows portable candidate is built by CI. It is not
-a signed installer. Treat alpha builds as experimental.
+ArcheTexture requires Python 3.12 or later. Version 0.1.0 is the current
+public alpha. The Windows portable bundle is distributed through the GitHub
+Release; it is unsigned and is not an installer. Treat alpha builds as
+experimental.
 
 To run from source, create and activate a virtual environment, then install the
 application:
