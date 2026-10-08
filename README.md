@@ -53,6 +53,23 @@ Core; systems without a compatible context retain the full 2D workflow and
 show an in-app unavailable message. The renderer is an inspection aid, not a
 renderer-accurate or color-managed PBR reference.
 
+The unreleased procedural library adds ridged and billow multifractals,
+gradient and domain-warped noise, expanded Voronoi distance choices, and
+architecture, organic, and textile patterns such as masonry, honeycomb,
+Truchet tiles, wood rings, marble veins, polka dots, radial rings and spokes,
+weave, and crosshatch. Scalar transforms now include range and power remaps,
+terracing, smoothstep, directional blur, emboss, high-pass, morphology,
+coordinate warps, polar and symmetry mappings, pixelation, and edge filters.
+Source and transform selectors provide category-aware searchable filtering.
+
+File → **New from Material…** opens a searchable collection of 18 editable
+recipes, including stone, marble, concrete, brick, metals, woods, textiles,
+ceramic, soil, rock, sci-fi panels, and organic surfaces. Each recipe builds
+Base Color, Roughness, Metallic, Normal, Height, and Ambient Occlusion outputs
+from procedural fields. Shared Scale and Wear Control Fields modulate the
+recipe, and Normal, Roughness, and AO stay linked to the live Height output.
+These are artistic starting points, not physically measured materials.
+
 - Build a procedural layer stack with opacity, blend modes, and ordered
   transforms.
 - Use noise, patterns, cellular, image, and seamless generators.
@@ -128,8 +145,9 @@ project files.
 ## Development status and limitations
 
 The published version 0.1.0 is an early development alpha and does not contain
-the unreleased multi-output or 3D preview work. Some generators and operations
-are not seamless, and the seam status is advisory. Normal-map layers use
+the unreleased multi-output, procedural-library, or 3D preview work. Some
+generators and operations are not seamless, and the seam status is advisory.
+Normal-map layers use
 regular image blend modes, which do not perform physically correct vector
 blending. The 3D preview uses a compact desktop OpenGL shader; parallax height,
 HDR/EXR, professional color management, and renderer-perfect matching are not

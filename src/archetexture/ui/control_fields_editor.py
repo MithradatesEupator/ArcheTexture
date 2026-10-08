@@ -74,8 +74,13 @@ class ControlFieldsEditor(QWidget):
         self.source_combo = QComboBox(self.details)
         self.source_combo.setObjectName("control-source")
         self._generators = self._compatible_generators()
-        for definition in self._generators:
-            self.source_combo.addItem(definition.name, definition.identifier)
+        self.source_search = QLineEdit(self.details)
+        self.source_search.setObjectName("control-source-search")
+        self.source_search.setPlaceholderText("Search scalar sources…")
+        self.source_search.setClearButtonEnabled(True)
+        detail_layout.addWidget(self.source_search)
+        self.source_search.textChanged.connect(self._filter_source_choices)
+        self._populate_source_choices()
         self.source_combo.currentIndexChanged.connect(self._source_selected)
         source_form = QFormLayout()
         source_form.addRow("Scalar source", self.source_combo)
@@ -93,8 +98,13 @@ class ControlFieldsEditor(QWidget):
         self.transform_combo = QComboBox(self.details)
         self.transform_combo.setObjectName("control-transform-type")
         self._transforms = self._compatible_transforms()
-        for definition in self._transforms:
-            self.transform_combo.addItem(definition.name, definition.identifier)
+        self.transform_search = QLineEdit(self.details)
+        self.transform_search.setObjectName("control-transform-search")
+        self.transform_search.setPlaceholderText("Search scalar transforms…")
+        self.transform_search.setClearButtonEnabled(True)
+        detail_layout.addWidget(self.transform_search)
+        self.transform_search.textChanged.connect(self._filter_transform_choices)
+        self._populate_transform_choices()
         self.add_transform_button = QPushButton("Add transform")
         self.remove_transform_button = QPushButton("Remove")
         chain_add.addWidget(self.transform_combo, 1)
@@ -301,6 +311,62 @@ class ControlFieldsEditor(QWidget):
         )
         definition = REGISTRY.get(instance.operation_id) if instance else None
         self.property_editor.set_operation(instance, definition)
+
+    def _populate_source_choices(self) -> None:
+        query = self.source_search.text().strip().casefold()
+        control = self._recipe.control_fields.get(self._selected_id)
+        selected = control.source.operation_id if control is not None else None
+        self.source_combo.blockSignals(True)
+        self.source_combo.clear()
+        for definition in self._generators:
+            searchable = " ".join(
+                (
+                    definition.category,
+                    definition.name,
+                    definition.description,
+                    definition.identifier,
+                )
+            ).casefold()
+            if not query or query in searchable:
+                self.source_combo.addItem(
+                    f"{definition.category} / {definition.name}", definition.identifier
+                )
+        index = self.source_combo.findData(selected)
+        if index >= 0:
+            self.source_combo.setCurrentIndex(index)
+        self.source_combo.blockSignals(False)
+
+    def _populate_transform_choices(self) -> None:
+        query = self.transform_search.text().strip().casefold()
+        selected = self.transform_combo.currentData()
+        self.transform_combo.blockSignals(True)
+        self.transform_combo.clear()
+        for definition in self._transforms:
+            searchable = " ".join(
+                (
+                    definition.category,
+                    definition.name,
+                    definition.description,
+                    definition.identifier,
+                )
+            ).casefold()
+            if not query or query in searchable:
+                self.transform_combo.addItem(
+                    f"{definition.category} / {definition.name}", definition.identifier
+                )
+        index = self.transform_combo.findData(selected)
+        if index >= 0:
+            self.transform_combo.setCurrentIndex(index)
+        self.transform_combo.setEnabled(self.transform_combo.count() > 0)
+        if hasattr(self, "add_transform_button"):
+            self.add_transform_button.setEnabled(self.transform_combo.count() > 0)
+        self.transform_combo.blockSignals(False)
+
+    def _filter_source_choices(self, _query: str) -> None:
+        self._populate_source_choices()
+
+    def _filter_transform_choices(self, _query: str) -> None:
+        self._populate_transform_choices()
 
     def _rename(self) -> None:
         if self._selected_id is not None:

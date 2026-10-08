@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from archetexture.core.assets import AssetReference
+from archetexture.core.expanded_operations import expanded_definitions
 from archetexture.core.operations import (
     OperationDefinition,
     OperationDefinitionSet,
@@ -45,7 +46,7 @@ def _spec(
 
 
 def builtin_definitions() -> tuple[OperationDefinition, ...]:
-    return (
+    definitions = (
         OperationDefinition(
             "generator.output_scalar",
             1,
@@ -387,9 +388,9 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
         OperationDefinition(
             "generator.cellular",
             1,
-            "Cellular",
+            "Cellular / Voronoi",
             "Patterns",
-            "Worley-style cells with nearest-distance and cell-edge outputs.",
+            "Worley / Voronoi cells with F1, F2, border, and distance-gap outputs.",
             OperationType.GENERATOR,
             (),
             "scalar",
@@ -405,7 +406,6 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
                     1.0,
                     48.0,
                     1.0,
-                    allows_modulation=False,
                 ),
                 _spec(
                     "jitter",
@@ -423,7 +423,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
                     ParameterType.ENUM,
                     "nearest",
                     allows_modulation=False,
-                    options=("nearest", "edge"),
+                    options=("nearest", "second", "edge", "gap"),
                 ),
             ),
             Seamlessness.UNKNOWN,
@@ -1136,6 +1136,7 @@ def builtin_definitions() -> tuple[OperationDefinition, ...]:
             spatial_transforms.height_to_normal,
         ),
     )
+    return definitions + expanded_definitions()
 
 
 def register_builtin_operations(target: OperationDefinitionSet = REGISTRY) -> None:

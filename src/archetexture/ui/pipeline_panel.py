@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -34,6 +35,7 @@ class PipelinePanel(QWidget):
         super().__init__(parent)
         self._syncing = False
         self._layer: LayerRecipe | None = None
+        self._current_source_id: str | None = None
         self.setMinimumWidth(220)
         layout = QVBoxLayout(self)
 
@@ -45,10 +47,13 @@ class PipelinePanel(QWidget):
             if definition.operation_type == OperationType.GENERATOR
         ]
         self._generators.sort(key=lambda definition: (definition.category, definition.name))
-        for definition in self._generators:
-            self.source_selector.addItem(
-                f"{definition.category} / {definition.name}", definition.identifier
-            )
+        self.source_search = QLineEdit()
+        self.source_search.setObjectName("source-operation-search")
+        self.source_search.setPlaceholderText("Search sources…")
+        self.source_search.setClearButtonEnabled(True)
+        layout.addWidget(self.source_search)
+        self.source_search.textChanged.connect(self._filter_sources)
+        self._populate_sources()
         self.source_selector.currentIndexChanged.connect(self._source_selected)
         layout.addWidget(self.source_selector)
 
@@ -59,6 +64,12 @@ class PipelinePanel(QWidget):
         layout.addWidget(self.transform_list, 1)
 
         self.transform_selector = QComboBox()
+        self.transform_search = QLineEdit()
+        self.transform_search.setObjectName("transform-operation-search")
+        self.transform_search.setPlaceholderText("Search compatible transforms…")
+        self.transform_search.setClearButtonEnabled(True)
+        layout.addWidget(self.transform_search)
+        self.transform_search.textChanged.connect(self._filter_transforms)
         layout.addWidget(self.transform_selector)
 
         controls = QHBoxLayout()
@@ -93,6 +104,7 @@ class PipelinePanel(QWidget):
         layer = layer or (recipe.layers[0] if recipe.layers else None)
         self._syncing = True
         self._layer = layer
+        self._current_source_id = layer.source.operation_id if layer and layer.source else None
         self.source_selector.blockSignals(True)
         self.transform_list.blockSignals(True)
         if layer is not None and layer.source is not None:
@@ -125,11 +137,64 @@ class PipelinePanel(QWidget):
         self._update_buttons()
         self.output_description.setText(self._describe_output(layer))
 
-    def _refresh_transform_choices(self, layer: LayerRecipe | None) -> None:
+    def _populate_sources(self, query: str = "") -> None:
+        query = query.strip().casefold()
+        selected = self._current_source_id
+        self.source_selector.blockSignals(True)
+        self.source_selector.clear()
+        for definition in self._generators:
+            searchable = " ".join(
+                (
+                    definition.category,
+                    definition.name,
+                    definition.description,
+                    definition.identifier,
+                )
+            ).casefold()
+            if not query or query in searchable:
+                self.source_selector.addItem(
+                    f"{definition.category} / {definition.name}", definition.identifier
+                )
+        index = self.source_selector.findData(selected)
+        if index >= 0:
+            self.source_selector.setCurrentIndex(index)
+        self.source_selector.blockSignals(False)
+
+    def _filter_sources(self, query: str) -> None:
+        self._populate_sources(query)
+
+    def _filter_transforms(self, query: str) -> None:
+        self._populate_transforms(query)
+
+    def _populate_transforms(self, query: str = "") -> None:
+        query = query.strip().casefold()
         previous = self.transform_selector.currentData()
         self.transform_selector.blockSignals(True)
         self.transform_selector.clear()
-        compatible = (
+        for definition in getattr(self, "_compatible", ()):
+            searchable = " ".join(
+                (
+                    definition.category,
+                    definition.name,
+                    definition.description,
+                    definition.identifier,
+                )
+            ).casefold()
+            if not query or query in searchable:
+                self.transform_selector.addItem(
+                    f"{definition.category} / {definition.name}", definition.identifier
+                )
+        index = self.transform_selector.findData(previous)
+        if index >= 0:
+            self.transform_selector.setCurrentIndex(index)
+        if self.transform_selector.count() == 0:
+            self.transform_selector.addItem("No matching transforms", None)
+        self.transform_selector.setEnabled(bool(self._compatible))
+        self.add_button.setEnabled(bool(self.transform_selector.currentData()))
+        self.transform_selector.blockSignals(False)
+
+    def _refresh_transform_choices(self, layer: LayerRecipe | None) -> None:
+        self._compatible = (
             compatible_append_transforms(
                 layer.source,
                 layer.transforms,
@@ -138,22 +203,8 @@ class PipelinePanel(QWidget):
             if layer is not None and layer.source is not None
             else ()
         )
-        for definition in sorted(compatible, key=lambda item: (item.category, item.name)):
-            self.transform_selector.addItem(
-                f"{definition.category} / {definition.name}", definition.identifier
-            )
-        if previous is not None:
-            index = self.transform_selector.findData(previous)
-            if index >= 0:
-                self.transform_selector.setCurrentIndex(index)
-        if not compatible:
-            self.transform_selector.addItem("No compatible transforms", None)
-            self.transform_selector.setEnabled(False)
-            self.add_button.setEnabled(False)
-        else:
-            self.transform_selector.setEnabled(True)
-            self.add_button.setEnabled(True)
-        self.transform_selector.blockSignals(False)
+        self._compatible = sorted(self._compatible, key=lambda item: (item.category, item.name))
+        self._populate_transforms(self.transform_search.text())
 
     @staticmethod
     def _describe_output(layer: LayerRecipe | None) -> str:
@@ -185,7 +236,8 @@ class PipelinePanel(QWidget):
 
     def _source_selected(self, index: int) -> None:
         if not self._syncing and index >= 0:
-            self.sourceChanged.emit(str(self.source_selector.itemData(index)))
+            self._current_source_id = str(self.source_selector.itemData(index))
+            self.sourceChanged.emit(self._current_source_id)
 
     def _item_selected(self, current: QListWidgetItem | None, _previous) -> None:
         if not self._syncing and current is not None:

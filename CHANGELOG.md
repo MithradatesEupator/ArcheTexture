@@ -25,6 +25,19 @@
 - The 3D preview is an inspection aid. Parallax height, professional color
   management, and renderer-perfect physical accuracy remain deferred; the
   published 0.1.0 binary is unchanged.
+- Expanded the procedural catalog with ridged, billow, gradient, and warped
+  noise; masonry, honeycomb, Truchet, wood, marble, dots, rings, spokes, weave,
+  and crosshatch sources; and scalar remap, blur, relief, morphology, spatial,
+  pixelate, and edge transforms. Existing Cellular now includes F2 and F2-F1
+  distance variants alongside F1 and edge outputs.
+- Added category-aware searchable source and transform selectors and a
+  searchable **New from Material…** workflow with 18 editable multi-output
+  starters. Starter maps share Scale and Wear Control Fields and keep Normal,
+  Roughness, and Ambient Occlusion live-linked to Height.
+- New operations use NumPy and the existing operation registry, type-flow,
+  cancellation, structural fingerprint, and render-cache paths; no runtime
+  dependencies were added. The starters are artistic recipes, not measured
+  physically accurate materials.
 - The published 0.1.0 binary and its release description remain unchanged.
 
 ## 0.1.0 — Initial public alpha

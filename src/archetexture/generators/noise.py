@@ -229,6 +229,10 @@ def _cellular_from_lattice(
             nearest = np.minimum(nearest, distance)
     if distance_mode == "edge":
         result = np.clip(1.0 - 2.0 * (second - nearest), 0.0, 1.0)
+    elif distance_mode == "second":
+        result = np.clip(second / np.float32(np.sqrt(2.0)), 0.0, 1.0)
+    elif distance_mode == "gap":
+        result = np.clip(second - nearest, 0.0, 1.0)
     else:
         result = np.clip(nearest / np.float32(np.sqrt(2.0)), 0.0, 1.0)
     return ensure_normalized_scalar(result)

@@ -32,6 +32,7 @@ from archetexture import __version__
 from archetexture.color.ramp import ColorRamp
 from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.document import DocumentController
+from archetexture.core.material_starters import create_material_starter
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import (
     ControlFieldBinding,
@@ -64,6 +65,7 @@ from archetexture.ui.control_fields_editor import ControlFieldsEditor
 from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.layers_panel import LayersPanel
+from archetexture.ui.material_starter_dialog import MaterialStarterDialog
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.preview_controls import PreviewControls
 from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
@@ -288,6 +290,7 @@ class MainWindow(QMainWindow):
         self.about_action.triggered.connect(self._show_about)
         appearance_menu = view_menu.addMenu("&Appearance")
         self.new_action = file_menu.addAction("&New")
+        self.new_from_material_action = file_menu.addAction("New from Material…")
         self.open_action = file_menu.addAction("&Open…")
         self.save_action = file_menu.addAction("&Save")
         self.save_as_action = file_menu.addAction("Save &As…")
@@ -330,6 +333,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.redo_action)
 
         self.new_action.triggered.connect(lambda: self.new_document())
+        self.new_from_material_action.triggered.connect(self.new_from_material)
         self.open_action.triggered.connect(lambda: self.open_project())
         self.save_action.triggered.connect(lambda: self.save_project())
         self.save_as_action.triggered.connect(lambda: self.save_project(save_as=True))
@@ -1899,6 +1903,31 @@ class MainWindow(QMainWindow):
         self.viewport.set_error("Rendering…")
         self._selected_layer_id = self._layers_for(recipe)[0].layer_id
         self._selected_instance_id = self._layers_for(recipe)[0].source.instance_id
+        self._refresh_document(request_render=True, reset_ramp_selection=True)
+        return True
+
+    def new_from_material(self, *_args) -> bool:
+        dialog = MaterialStarterDialog(self)
+        if dialog.exec() != dialog.DialogCode.Accepted or dialog.selected_starter is None:
+            return False
+        if not self._confirm_discard():
+            return False
+        try:
+            recipe = create_material_starter(dialog.selected_starter.name)
+        except Exception as exc:
+            QMessageBox.critical(self, "Material creation failed", str(exc))
+            return False
+        recipe = self.document.new_document(recipe)
+        self._selected_output_id = next(
+            item.output_id for item in recipe.outputs if item.semantic == "base_color"
+        )
+        self._selected_layer_id = self._layers_for(recipe)[0].layer_id
+        self._selected_instance_id = self._layers_for(recipe)[0].source.instance_id
+        self._selected_control_field_id = "Scale"
+        self.render_session.clear()
+        self._latest_render_result = None
+        self._latest_displayed_request_id = None
+        self.viewport.set_error("Rendering…")
         self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 

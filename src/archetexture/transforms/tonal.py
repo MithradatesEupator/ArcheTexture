@@ -42,7 +42,7 @@ def normalize(source, _parameters: Mapping[str, Any], _width: int, _height: int,
     return ensure_normalized_scalar((values - minimum) / span)
 
 
-def _gaussian_blur(values: np.ndarray, sigma: float) -> np.ndarray:
+def _gaussian_blur(values: np.ndarray, sigma: float, context=None) -> np.ndarray:
     if sigma <= 1e-4:
         return values.copy()
     radius = max(1, int(np.ceil(3.0 * sigma)))
@@ -51,9 +51,13 @@ def _gaussian_blur(values: np.ndarray, sigma: float) -> np.ndarray:
     weights /= np.sum(weights)
     horizontal = np.zeros_like(values, dtype=np.float32)
     for offset, weight in zip(range(-radius, radius + 1), weights, strict=True):
+        if context is not None:
+            context.check_cancelled()
         horizontal += np.roll(values, offset, axis=1) * weight
     vertical = np.zeros_like(values, dtype=np.float32)
     for offset, weight in zip(range(-radius, radius + 1), weights, strict=True):
+        if context is not None:
+            context.check_cancelled()
         vertical += np.roll(horizontal, offset, axis=0) * weight
     return ensure_normalized_scalar(vertical)
 
