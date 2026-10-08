@@ -16,6 +16,7 @@ class ParameterType(str, Enum):
     COLOR = "color"
     POSITION_2D = "position_2d"
     IMAGE_ASSET = "image_asset"
+    MATERIAL_OUTPUT = "material_output"
 
 
 @dataclass(frozen=True)

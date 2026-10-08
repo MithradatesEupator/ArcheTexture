@@ -17,6 +17,7 @@ from archetexture.core.fields import (
     validate_scalar_field,
 )
 from archetexture.core.fingerprinting import structural_fingerprint
+from archetexture.core.output_dependencies import OUTPUT_REFERENCE_OPERATIONS
 from archetexture.core.operations import OperationDefinitionSet
 from archetexture.core.pipeline import _evaluate_pipeline, _Evaluation
 from archetexture.core.recipe import MaterialOutputRecipe, ProjectRecipe
@@ -100,18 +101,47 @@ class RenderEngine:
         render_context: RenderContext | None = None,
         use_cache: bool = True,
     ) -> MaterialRenderResult:
-        results = {
-            output.output_id: self.render_output(
+        results = self.render_outputs(
+            recipe,
+            [output.output_id for output in recipe.outputs],
+            width=width,
+            height=height,
+            render_context=render_context,
+            use_cache=use_cache,
+        )
+        return MaterialRenderResult(results)
+
+    def render_outputs(
+        self,
+        recipe: ProjectRecipe,
+        output_ids: list[str] | tuple[str, ...],
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        render_context: RenderContext | None = None,
+        use_cache: bool = True,
+    ) -> dict[str, MaterialOutputResult]:
+        """Resolve requested outputs in one material evaluation and share dependencies."""
+        ensure_valid_recipe(recipe, self.registry)
+        output_width = recipe.width if width is None else width
+        output_height = recipe.height if height is None else height
+        context = render_context or RenderContext(asset_cache=self.session.asset_cache)
+        evaluation = _Evaluation(
+            recipe, output_width, output_height, self.registry,
+            render_context=context, session=self.session, cache_enabled=use_cache,
+        )
+        return {
+            output_id: self.render_output(
                 recipe,
-                output.output_id,
+                output_id,
                 width=width,
                 height=height,
                 render_context=render_context,
                 use_cache=use_cache,
+                _evaluation=evaluation,
             )
-            for output in recipe.outputs
+            for output_id in dict.fromkeys(output_ids)
         }
-        return MaterialRenderResult(results)
 
     def render_output(
         self,
@@ -122,20 +152,30 @@ class RenderEngine:
         height: int | None = None,
         render_context: RenderContext | None = None,
         use_cache: bool = True,
+        _evaluation: _Evaluation | None = None,
     ) -> MaterialOutputResult:
         ensure_valid_recipe(recipe, self.registry)
         output = recipe.output(output_id)
         output_width = recipe.width if width is None else width
         output_height = recipe.height if height is None else height
-        context = render_context or RenderContext(asset_cache=self.session.asset_cache)
-        evaluation = _Evaluation(
-            recipe,
-            output_width,
-            output_height,
-            self.registry,
-            render_context=context,
-            session=self.session,
-            cache_enabled=use_cache,
+        context = (
+            _evaluation.render_context
+            if _evaluation is not None
+            else render_context or RenderContext(asset_cache=self.session.asset_cache)
+        )
+        evaluation = _evaluation or _Evaluation(
+            recipe, output_width, output_height, self.registry,
+            render_context=context, session=self.session, cache_enabled=use_cache,
+        )
+        if output_id in evaluation.output_cache:
+            return evaluation.output_cache[output_id]
+        if output_id in evaluation.output_stack:
+            cycle = evaluation.output_stack + [output_id]
+            raise ValueError("Output dependency cycle: " + " → ".join(cycle))
+        evaluation.output_stack.append(output_id)
+        evaluation.output_resolver = lambda target: self.render_output(
+            recipe, target, width=output_width, height=output_height,
+            render_context=context, use_cache=use_cache, _evaluation=evaluation,
         )
         composite = self._clear_buffer(output, output_height, output_width)
         scalar_result: ScalarField | None = None
@@ -151,7 +191,11 @@ class RenderEngine:
                 context.check_cancelled()
                 cache_key = None
                 cached = None
-                if use_cache:
+                uses_output_reference = any(
+                    instance.operation_id in OUTPUT_REFERENCE_OPERATIONS
+                    for instance in [layer.source, *layer.transforms]
+                )
+                if use_cache and not uses_output_reference:
                     dependencies = control_dependency_definitions(
                         recipe, layer_content_dependencies(layer)
                     )
@@ -227,9 +271,12 @@ class RenderEngine:
             rgba_result = validate_rgba_field(preview)
         else:
             rgba_result = validate_rgba_field(composite)
-        return MaterialOutputResult(
+        result = MaterialOutputResult(
             output_id, output.value_type, scalar_result, rgba_result, mask_fields, legacy_scalar
         )
+        evaluation.output_stack.pop()
+        evaluation.output_cache[output_id] = result
+        return result
 
     @staticmethod
     def _clear_buffer(output: MaterialOutputRecipe, height: int, width: int):

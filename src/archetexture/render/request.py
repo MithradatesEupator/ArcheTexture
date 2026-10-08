@@ -14,4 +14,5 @@ class RenderRequest:
     width: int
     height: int
     render_context: RenderContext | None
+    output_id: str | None = None
     cancellation_token: CancellationToken = field(default_factory=CancellationToken, compare=False)

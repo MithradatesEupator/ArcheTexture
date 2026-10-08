@@ -43,6 +43,9 @@ class _Evaluation:
     render_context: RenderContext = field(default_factory=RenderContext)
     session: Any = None
     cache_enabled: bool = True
+    output_resolver: Any = None
+    output_cache: dict[str, Any] = field(default_factory=dict)
+    output_stack: list[str] = field(default_factory=list)
 
     def resolve_binding(self, binding: ControlFieldBinding) -> ScalarField:
         self.render_context.check_cancelled()
@@ -166,12 +169,13 @@ def _run_instance(
         for spec in definition.parameter_specs
     }
     args = (input_field, parameters, evaluation.width, evaluation.height, seed)
-    result = np.asarray(
-        implementation(*args, evaluation.render_context)
-        if definition.requires_render_context
-        else implementation(*args),
-        dtype=np.float32,
-    )
+    if definition.requires_output_resolver:
+        result = implementation(*args, evaluation.output_resolver)
+    elif definition.requires_render_context:
+        result = implementation(*args, evaluation.render_context)
+    else:
+        result = implementation(*args)
+    result = np.asarray(result, dtype=np.float32)
     evaluation.render_context.check_cancelled()
     if definition.output_type == "scalar":
         return ensure_normalized_scalar(validate_scalar_field(result, name=definition.identifier))

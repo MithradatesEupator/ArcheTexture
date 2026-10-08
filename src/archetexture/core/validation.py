@@ -8,6 +8,10 @@ from typing import Any
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.assets import AssetReference
 from archetexture.core.dependencies import iter_control_bindings
+from archetexture.core.output_dependencies import (
+    OUTPUT_REFERENCE_OPERATIONS,
+    iter_output_references,
+)
 from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.outputs import OUTPUT_SEMANTICS
 from archetexture.core.parameters import (
@@ -138,6 +142,8 @@ def _validate_parameter_value(
                 and (Path(value.path).is_absolute() or ".." in Path(value.path).parts)
             )
         )
+    elif kind == ParameterType.MATERIAL_OUTPUT:
+        valid = isinstance(value, str) and bool(value)
     if not valid:
         issues.append(ValidationIssue(path, f"must have type {kind.value}"))
         return
@@ -148,6 +154,7 @@ def _validate_parameter_value(
         ParameterType.COLOR,
         ParameterType.POSITION_2D,
         ParameterType.IMAGE_ASSET,
+        ParameterType.MATERIAL_OUTPUT,
     }:
         number = float(value)
         if spec.min_value is not None and number < spec.min_value:
@@ -551,6 +558,17 @@ def validate_recipe(
         else:
             control_transforms = control.transforms
         nested = [control.source, *control_transforms]
+        if any(
+            isinstance(item, OperationInstance)
+            and item.operation_id in OUTPUT_REFERENCE_OPERATIONS
+            for item in nested
+        ):
+            issues.append(
+                ValidationIssue(
+                    path,
+                    "material output references are not supported inside Control Fields",
+                )
+            )
         for binding in (binding for item in nested for binding in _instance_bindings(item)):
             if isinstance(binding.source_id, str):
                 dependencies.add(binding.source_id)
@@ -607,6 +625,78 @@ def validate_recipe(
                         f"binding references unknown control field {binding.source_id!r}",
                     )
                 )
+
+    output_graph: dict[str, set[str]] = {
+        output.output_id: set()
+        for output in outputs
+        if isinstance(output, MaterialOutputRecipe) and isinstance(output.output_id, str)
+    }
+    for output in outputs:
+        if not isinstance(output, MaterialOutputRecipe) or output.output_id not in output_graph:
+            continue
+        for layer in output.layers if isinstance(output.layers, list) else []:
+            if not isinstance(layer, LayerRecipe):
+                continue
+            for instance in [layer.source, *(layer.transforms if isinstance(layer.transforms, list) else [])]:
+                if not isinstance(instance, OperationInstance):
+                    continue
+                if instance.operation_id in OUTPUT_REFERENCE_OPERATIONS:
+                    target = next(iter_output_references(instance), None)
+                    if target not in output_graph:
+                        issues.append(
+                            ValidationIssue(
+                                f"outputs.{output.output_id}.{layer.name}",
+                                f"references missing output {target!r}",
+                            )
+                        )
+                    else:
+                        output_graph[output.output_id].add(target)
+                        if instance.operation_id == "generator.output_scalar":
+                            target_recipe = next(
+                                (item for item in outputs if isinstance(item, MaterialOutputRecipe) and item.output_id == target),
+                                None,
+                            )
+                            mode = instance.parameters.get("mode", "Direct") if isinstance(instance.parameters, dict) else "Direct"
+                            if target_recipe is not None:
+                                if mode == "Direct" and target_recipe.value_type != "scalar":
+                                    issues.append(
+                                        ValidationIssue(
+                                            f"outputs.{output.output_id}.{layer.name}",
+                                            f"Direct mode requires a scalar target; {target_recipe.name} is {target_recipe.value_type.title()}.",
+                                        )
+                                    )
+                                elif mode != "Direct" and target_recipe.value_type == "scalar":
+                                    issues.append(
+                                        ValidationIssue(
+                                            f"outputs.{output.output_id}.{layer.name}",
+                                            f"{mode} extraction requires a color or normal target.",
+                                        )
+                                    )
+    visiting_outputs: list[str] = []
+    visited_outputs: set[str] = set()
+
+    def visit_output(output_id: str) -> None:
+        if output_id in visiting_outputs:
+            cycle = visiting_outputs[visiting_outputs.index(output_id):] + [output_id]
+            labels = {item.output_id: item.name for item in outputs if isinstance(item, MaterialOutputRecipe)}
+            issues.append(
+                ValidationIssue(
+                    "outputs",
+                    "Output dependency cycle: "
+                    + " → ".join(labels.get(item, item) for item in cycle),
+                )
+            )
+            return
+        if output_id in visited_outputs:
+            return
+        visiting_outputs.append(output_id)
+        for dependency in output_graph.get(output_id, ()):
+            visit_output(dependency)
+        visiting_outputs.pop()
+        visited_outputs.add(output_id)
+
+    for output_id in output_graph:
+        visit_output(output_id)
 
     visiting: set[str] = set()
     visited: set[str] = set()

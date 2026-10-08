@@ -42,6 +42,7 @@ class OperationDefinition:
     seamlessness: Seamlessness = Seamlessness.UNKNOWN
     implementation: OperationImplementation | None = field(default=None, compare=False, repr=False)
     requires_render_context: bool = False
+    requires_output_resolver: bool = False
 
 
 @dataclass
@@ -86,6 +87,7 @@ class OperationDefinitionSet:
             seamlessness=definition.seamlessness,
             implementation=executor,
             requires_render_context=definition.requires_render_context,
+            requires_output_resolver=definition.requires_output_resolver,
         )
 
     def unregister(self, identifier: str) -> None:

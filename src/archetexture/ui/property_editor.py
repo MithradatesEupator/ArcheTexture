@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.core.assets import AssetReference, RenderContext
+from archetexture.core.output_dependencies import transitive_output_dependencies
 from archetexture.core.operations import OperationDefinition, OperationType
 from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance
@@ -48,6 +49,9 @@ class PropertyEditor(QWidget):
         self.setObjectName("property-editor")
         self._form = QFormLayout()
         self._control_fields: dict = {}
+        self._material_outputs = []
+        self._current_output_id: str | None = None
+        self._cycle_targets: set[str] = set()
         self._project_path = None
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
@@ -71,9 +75,27 @@ class PropertyEditor(QWidget):
             self._form.addRow(QLabel("Select a source or transform."))
             return
         self._heading.setText(definition.name)
+        operation_id = definition.identifier
+        mode = instance.parameters.get("mode", "Direct")
         for spec in definition.parameter_specs:
             value = instance.parameters.get(spec.identifier, spec.default)
-            self._form.addRow(spec.name, self._make_widget(spec, value))
+            widget = self._make_widget(spec, value)
+            if spec.type == ParameterType.MATERIAL_OUTPUT and isinstance(widget, QComboBox):
+                widget.clear()
+                for output in self._material_outputs:
+                    if output.output_id == self._current_output_id or output.output_id in self._cycle_targets:
+                        continue
+                    if operation_id == "generator.output_scalar" and mode == "Direct" and output.value_type != "scalar":
+                        continue
+                    if operation_id == "generator.output_scalar" and mode != "Direct" and output.value_type == "scalar":
+                        continue
+                    widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
+                index = widget.findData(value)
+                if index < 0 and value:
+                    widget.addItem("Missing output", value)
+                    index = widget.count() - 1
+                widget.setCurrentIndex(index)
+            self._form.addRow(spec.name, widget)
         if definition.operation_type == OperationType.TRANSFORM:
             influence_spec = ParameterSpec(
                 "influence",
@@ -155,6 +177,21 @@ class PropertyEditor(QWidget):
             widget.setCurrentIndex(index)
             widget.currentTextChanged.connect(
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
+            )
+        elif spec.type == ParameterType.MATERIAL_OUTPUT:
+            widget = QComboBox()
+            for output in self._material_outputs:
+                if output.output_id != self._current_output_id and output.output_id not in self._cycle_targets:
+                    widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
+            index = widget.findData(value)
+            if index < 0 and value:
+                widget.addItem("Missing output", value)
+                index = widget.count() - 1
+            widget.setCurrentIndex(index)
+            widget.currentIndexChanged.connect(
+                lambda _changed, combo=widget, key=spec.identifier: self.valueChanged.emit(
+                    key, combo.currentData()
+                )
             )
         elif spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
             widget = _DirectSpinBox()
@@ -247,6 +284,15 @@ class PropertyEditor(QWidget):
 
     def set_control_fields(self, control_fields: dict) -> None:
         self._control_fields = control_fields
+
+    def set_material_outputs(self, recipe, current_output_id: str | None) -> None:
+        self._material_outputs = list(recipe.outputs)
+        self._current_output_id = current_output_id
+        self._cycle_targets = {
+            output.output_id
+            for output in recipe.outputs
+            if current_output_id in transitive_output_dependencies(recipe, output.output_id)
+        }
 
     def set_project_path(self, project_path) -> None:
         self._project_path = project_path

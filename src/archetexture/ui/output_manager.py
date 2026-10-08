@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -20,6 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from archetexture.core.output_dependencies import (
+    output_direct_dependencies,
+    transitive_output_dependencies,
+)
 from archetexture.core.material_presets import (
     MATERIAL_PRESETS,
     apply_material_preset,
@@ -27,7 +33,8 @@ from archetexture.core.material_presets import (
     new_material_output,
 )
 from archetexture.core.outputs import OUTPUT_CATEGORIES, semantics_in_category
-from archetexture.core.recipe import ProjectRecipe
+from archetexture.core.recipe import LayerRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.registry import REGISTRY
 
 
 class AddOutputDialog(QDialog):
@@ -120,6 +127,8 @@ class OutputManagerDialog(QDialog):
         self.duplicate_button.clicked.connect(self._duplicate)
         self.remove_button = QPushButton("Delete")
         self.remove_button.clicked.connect(self._delete)
+        self.derive_button = QPushButton("Derive Output…")
+        self.derive_button.clicked.connect(self._derive)
         self.up_button = QPushButton("Move up")
         self.up_button.clicked.connect(lambda: self._move(-1))
         self.down_button = QPushButton("Move down")
@@ -128,6 +137,7 @@ class OutputManagerDialog(QDialog):
             self.add_button,
             self.duplicate_button,
             self.remove_button,
+            self.derive_button,
             self.up_button,
             self.down_button,
         ):
@@ -147,6 +157,9 @@ class OutputManagerDialog(QDialog):
             "Applying a preset adds missing semantics and preserves existing outputs."
         )
         root.addWidget(self.preset_note)
+        self.dependencies_label = QLabel()
+        self.dependencies_label.setObjectName("output-dependencies")
+        root.addWidget(self.dependencies_label)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=self
         )
@@ -198,6 +211,9 @@ class OutputManagerDialog(QDialog):
         )
         self.enabled_combo.setCurrentIndex(max(0, self.enabled_combo.findData(output.enabled)))
         self.remove_button.setEnabled(len(self.recipe.outputs) > 1)
+        dependencies = output_direct_dependencies(self.recipe, output.output_id)
+        labels = [item.name for item in self.recipe.outputs if item.output_id in dependencies]
+        self.dependencies_label.setText("Depends on: " + (", ".join(labels) if labels else "None"))
         row = self.listing.currentRow()
         self.up_button.setEnabled(row > 0)
         self.down_button.setEnabled(row >= 0 and row < self.listing.count() - 1)
@@ -246,11 +262,125 @@ class OutputManagerDialog(QDialog):
         output = self._current_output()
         if output is None:
             return
+        dependents = [
+            item.name for item in self.recipe.outputs
+            if item.output_id != output.output_id
+            and output.output_id in output_direct_dependencies(self.recipe, item.output_id)
+        ]
+        if dependents:
+            QMessageBox.warning(
+                self, "Output is in use",
+                f"Cannot delete {output.name}. Used by: " + ", ".join(dependents),
+            )
+            return
         index = self.recipe.outputs.index(output)
         self.recipe.outputs.remove(output)
         self.selected_output_id = self.recipe.outputs[
             min(index, len(self.recipe.outputs) - 1)
         ].output_id
+        self._refresh()
+
+    def _derive(self) -> None:
+        helpers = (
+            "Normal from Height", "Glossiness from Roughness", "Roughness from Glossiness",
+            "Opacity from Base Color Alpha", "Height from Base Color Luminance",
+            "Custom Scalar from Output…", "Custom Color from Output…",
+        )
+        helper, accepted = QInputDialog.getItem(self, "Derive Output", "Workflow:", helpers, 0, False)
+        if not accepted:
+            return
+        desired = {
+            "Normal from Height": "scalar",
+            "Glossiness from Roughness": "scalar",
+            "Roughness from Glossiness": "scalar",
+            "Opacity from Base Color Alpha": "color",
+            "Height from Base Color Luminance": "color",
+            "Custom Scalar from Output…": None,
+            "Custom Color from Output…": None,
+        }[helper]
+        preferred_semantics = {
+            "Normal from Height": "height",
+            "Glossiness from Roughness": "roughness",
+            "Roughness from Glossiness": "glossiness",
+            "Opacity from Base Color Alpha": "base_color",
+            "Height from Base Color Luminance": "base_color",
+        }
+        candidates = [
+            item for item in self.recipe.outputs
+            if item.output_id != self.selected_output_id
+            and self.selected_output_id not in transitive_output_dependencies(self.recipe, item.output_id)
+        ]
+        if desired:
+            candidates = [item for item in candidates if item.value_type == desired]
+        preferred = preferred_semantics.get(helper)
+        preferred_outputs = [item for item in candidates if item.semantic == preferred]
+        if preferred_outputs:
+            candidates = preferred_outputs
+        if not candidates:
+            QMessageBox.information(self, "No source output", "Add a compatible source output first.")
+            return
+        labels = [f"{item.name} · {item.value_type.title()}" for item in candidates]
+        label, accepted = QInputDialog.getItem(self, "Choose Source Output", "Output:", labels, 0, False)
+        if not accepted:
+            return
+        target = candidates[labels.index(label)]
+        is_normal = helper == "Normal from Height"
+        is_color = helper == "Custom Color from Output…"
+        if is_normal:
+            semantic, name = "normal", "Normal from Height"
+        elif is_color:
+            semantic, name = "custom_color", "Derived Color"
+        elif helper == "Glossiness from Roughness":
+            semantic, name = "glossiness", "Glossiness"
+        elif helper == "Roughness from Glossiness":
+            semantic, name = "roughness", "Roughness"
+        elif helper == "Opacity from Base Color Alpha":
+            semantic, name = "opacity", "Opacity"
+        elif helper == "Height from Base Color Luminance":
+            semantic, name = "height", "Height"
+        else:
+            semantic, name = "mask", "Derived Scalar"
+        output = new_material_output(semantic, name)
+        if is_normal:
+            source_operation = "generator.output_scalar"
+            mode = "Direct"
+            transform_id = "transform.height_to_normal"
+        elif helper in {"Glossiness from Roughness", "Roughness from Glossiness"}:
+            source_operation = "generator.output_scalar"
+            mode = "Direct"
+            transform_id = "transform.invert"
+        elif helper == "Opacity from Base Color Alpha":
+            source_operation = "generator.output_scalar"
+            mode = "Alpha"
+            transform_id = None
+        elif helper == "Height from Base Color Luminance":
+            source_operation = "generator.output_scalar"
+            mode = "Luminance"
+            transform_id = None
+        elif is_color:
+            source_operation = "generator.output_color"
+            mode = None
+            transform_id = None
+        else:
+            source_operation = "generator.output_scalar"
+            mode = "Direct" if target.value_type == "scalar" else "Luminance"
+            transform_id = None
+        source = OperationInstance(
+            f"source-{uuid.uuid4().hex[:12]}", source_operation, 1,
+            parameters={"target": target.output_id, **({"mode": mode} if mode else {})},
+        )
+        transforms = []
+        if transform_id:
+            definition = REGISTRY.get(transform_id)
+            transforms.append(OperationInstance(
+                f"op-{uuid.uuid4().hex[:12]}", transform_id, definition.version,
+                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
+            ))
+        output.layers[0] = LayerRecipe(
+            f"layer-{uuid.uuid4().hex[:12]}", "Derived Layer", source, transforms
+        )
+        self.recipe.outputs.append(output)
+        self.selected_output_id = output.output_id
         self._refresh()
 
     def _move(self, delta: int) -> None:

@@ -18,13 +18,20 @@ advanced, utility, and custom color/scalar outputs. Control Fields remain
 project-global and can drive layers in multiple outputs. Material presets add
 missing channels without replacing existing work.
 
-Scalar outputs keep normalized float32 values through compositing and export;
-their viewport representation is grayscale. Color outputs retain RGBA
-compositing. Normal outputs require RGBA-producing layers, with Height to
-Normal as the supported procedural path. Normal layers still use ordinary
-image blending, not vector-correct normal blending. Outputs do not yet have
-live references to one another; copying or moving a pipeline creates an
-independent layer stack.
+  Scalar outputs keep normalized float32 values through compositing and export;
+  their viewport representation is grayscale. Color outputs retain RGBA
+  compositing. Output reference generators can derive live scalar and color
+  fields from another output by stable output ID. Scalar extraction supports
+  Direct, luminance, RGB, alpha, average, minimum, and maximum modes. The
+  Output Manager includes derived workflows such as Normal from Height,
+  reciprocal Roughness and Glossiness, Base Color Alpha to Opacity, and custom
+  scalar or color outputs. Normal from Height remains an ordinary editable
+  pipeline, so changing Height updates Normal. Renaming and reordering outputs
+  preserve references. Dependency cycles are rejected, Control Fields cannot
+  reference material outputs in this release, and deleting a referenced output
+  is blocked with its dependents listed. Texture-set export renders hidden
+  upstream dependencies internally while writing only selected maps. Normal
+  layers still use ordinary image blending, not vector-correct normal blending.
 
 Texture-set export writes separate semantic maps and supports ORM, RMA, MRA,
 Unity HDRP-like mask packing, and custom RGBA channel packs. Missing packing

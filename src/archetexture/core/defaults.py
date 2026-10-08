@@ -105,7 +105,9 @@ def default_recipe() -> ProjectRecipe:
                 "scalar",
                 [_constant_layer("metallic", 0.0)],
             ),
-            MaterialOutputRecipe("normal", "Normal", "normal", "normal", [_normal_layer()]),
+            MaterialOutputRecipe(
+                "normal", "Normal", "normal", "normal", [_normal_layer("height")]
+            ),
             MaterialOutputRecipe(
                 "height", "Height", "height", "scalar", [_constant_layer("height", 0.5)]
             ),
@@ -128,7 +130,7 @@ def _constant_layer(name: str, value: float) -> LayerRecipe:
     )
 
 
-def _normal_layer() -> LayerRecipe:
+def _normal_layer(height_output_id: str | None = None) -> LayerRecipe:
     from archetexture.core.registry import REGISTRY
 
     definition = REGISTRY.get("transform.height_to_normal")
@@ -138,9 +140,17 @@ def _normal_layer() -> LayerRecipe:
         definition.version,
         parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
     )
+    source = (
+        OperationInstance(
+            "source-normal", "generator.output_scalar", 1,
+            parameters={"target": height_output_id, "mode": "Direct"},
+        )
+        if height_output_id
+        else OperationInstance("source-normal", "generator.constant", 1, parameters={"value": 0.5})
+    )
     return LayerRecipe(
         "layer-normal",
         "Layer 1",
-        OperationInstance("source-normal", "generator.constant", 1, parameters={"value": 0.5}),
+        source,
         [transform],
     )

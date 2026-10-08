@@ -450,6 +450,7 @@ class MainWindow(QMainWindow):
                 )
         self.pipeline_panel.set_recipe(recipe, self._selected_instance_id, layer)
         self.property_editor.set_control_fields(recipe.control_fields)
+        self.property_editor.set_material_outputs(recipe, output.output_id)
         self.property_editor.set_project_path(self.document.project_path)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
         self.control_fields_editor.property_editor.set_project_path(self.document.project_path)
@@ -514,7 +515,6 @@ class MainWindow(QMainWindow):
             (item for item in render_recipe.outputs if item.output_id == self._selected_output_id),
             render_recipe.outputs[0],
         )
-        render_recipe.outputs = [selected]
         self.statusBar().showMessage("Rendering…")
         try:
             self.render_coordinator.request(
@@ -522,6 +522,7 @@ class MainWindow(QMainWindow):
                 width=render_recipe.width,
                 height=render_recipe.height,
                 render_context=RenderContext(self.document.project_path),
+                output_id=selected.output_id,
             )
         except Exception as exc:
             self.viewport.set_error(str(exc))
@@ -593,7 +594,7 @@ class MainWindow(QMainWindow):
             selected = next(
                 item for item in recipe.outputs if item.output_id == self._selected_output_id
             )
-            recipe.outputs = [selected]
+            recipe.outputs = [selected, *(item for item in recipe.outputs if item.output_id != selected.output_id)]
             self.export_coordinator.request(
                 recipe,
                 destination,
@@ -812,6 +813,25 @@ class MainWindow(QMainWindow):
                 instance.parameters.get(parameter_id), ControlFieldBinding
             )
             instance.parameters[parameter_id] = value
+            if instance.operation_id == "generator.output_scalar" and parameter_id == "mode":
+                refresh_properties = True
+                target_id = instance.parameters.get("target")
+                target = next(
+                    (item for item in recipe.outputs if item.output_id == target_id), None
+                )
+                target_is_scalar = target is not None and target.value_type == "scalar"
+                needs_scalar = value == "Direct"
+                if target is None or target_is_scalar != needs_scalar:
+                    compatible = next(
+                        (
+                            item for item in recipe.outputs
+                            if item.output_id != self._selected_output_id
+                            and (item.value_type == "scalar") == needs_scalar
+                        ),
+                        None,
+                    )
+                    if compatible is not None:
+                        instance.parameters["target"] = compatible.output_id
         self._commit_recipe(
             recipe,
             instance.instance_id,
@@ -932,8 +952,14 @@ class MainWindow(QMainWindow):
                 self, "Incompatible layer", "This layer does not match the target output type."
             )
             return
-        target.layers.append(self._clone_layer(layer))
-        self._commit_recipe(recipe)
+        candidate = copy.deepcopy(recipe)
+        candidate.output(target.output_id).layers.append(self._clone_layer(layer))
+        try:
+            ensure_valid_recipe(candidate)
+        except ValidationError as exc:
+            QMessageBox.warning(self, "Cannot copy layer", str(exc))
+            return
+        self._commit_recipe(candidate)
 
     def _move_layer_to_output(self, layer_id: str) -> None:
         recipe = self.document.recipe
@@ -956,12 +982,21 @@ class MainWindow(QMainWindow):
                 self, "Incompatible layer", "This layer does not match the target output type."
             )
             return
-        source_output.layers.remove(layer)
-        target.layers.append(layer)
+        candidate = copy.deepcopy(recipe)
+        candidate_source = candidate.output(source_output.output_id)
+        candidate_target = candidate.output(target.output_id)
+        candidate_layer = next(item for item in candidate_source.layers if item.layer_id == layer.layer_id)
+        candidate_source.layers.remove(candidate_layer)
+        candidate_target.layers.append(candidate_layer)
+        try:
+            ensure_valid_recipe(candidate)
+        except ValidationError as exc:
+            QMessageBox.warning(self, "Cannot move layer", str(exc))
+            return
         self._selected_output_id = target.output_id
-        self._selected_layer_id = layer.layer_id
-        self._selected_instance_id = layer.source.instance_id
-        self._commit_recipe(recipe, self._selected_instance_id)
+        self._selected_layer_id = candidate_layer.layer_id
+        self._selected_instance_id = candidate_layer.source.instance_id
+        self._commit_recipe(candidate, self._selected_instance_id)
 
     def _create_output_from_layer(self, layer_id: str) -> None:
         recipe = self.document.recipe

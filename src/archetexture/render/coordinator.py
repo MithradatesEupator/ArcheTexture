@@ -49,6 +49,7 @@ class RenderCoordinator:
         height: int,
         callback: Callable[[RenderOutcome], None] | None = None,
         render_context: RenderContext | None = None,
+        output_id: str | None = None,
     ) -> RenderRequest:
         for name, dimension in (("width", width), ("height", height)):
             if not isinstance(dimension, int) or isinstance(dimension, bool) or dimension <= 0:
@@ -58,7 +59,7 @@ class RenderCoordinator:
             if self._closed:
                 raise RuntimeError("Render coordinator is closed")
             self.request_counter += 1
-            request = RenderRequest(self.request_counter, snapshot, width, height, render_context)
+            request = RenderRequest(self.request_counter, snapshot, width, height, render_context, output_id)
             self._latest_request_id = request.request_id
             if callback is not None:
                 self._callbacks[request.request_id] = callback
@@ -92,7 +93,12 @@ class RenderCoordinator:
                     request.cancellation_token,
                 )
                 kwargs["render_context"] = context
-        future = self._executor.submit(self.engine.render, request.recipe, **kwargs)
+        if request.output_id is None:
+            future = self._executor.submit(self.engine.render, request.recipe, **kwargs)
+        else:
+            future = self._executor.submit(
+                self.engine.render_output, request.recipe, request.output_id, **kwargs
+            )
         future.add_done_callback(lambda completed: self._finished(request, completed))
 
     def _finished(self, request: RenderRequest, future: Future[RenderResult]) -> None:

@@ -12,6 +12,7 @@ from PIL import Image
 
 from archetexture.core.assets import RenderContext
 from archetexture.core.recipe import ProjectRecipe
+from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.render.engine import MaterialOutputResult, RenderEngine
 from archetexture.render.pixels import rgba_float_to_uint8
 
@@ -147,6 +148,10 @@ class TextureSetExporter:
         self.engine = engine or RenderEngine()
 
     def preflight(self, recipe: ProjectRecipe, plan: TextureSetExportPlan) -> tuple[Path, ...]:
+        try:
+            ensure_valid_recipe(recipe, self.engine.registry)
+        except ValidationError as exc:
+            raise TextureSetExportError(f"Invalid material dependency graph: {exc}") from exc
         if isinstance(plan.width, bool) or not 1 <= plan.width <= 8192:
             raise TextureSetExportError("Export width must be between 1 and 8192")
         if isinstance(plan.height, bool) or not 1 <= plan.height <= 8192:
@@ -252,43 +257,30 @@ class TextureSetExporter:
             )
             if item.include
         ]
-        rendered: dict[str, MaterialOutputResult] = {}
-        for index, spec in enumerate(specs):
+        for spec in specs:
             if progress:
                 progress(f"Rendering {output_by_id[spec.output_id].name}…")
-            try:
-                rendered[spec.output_id] = self.engine.render_output(
-                    recipe,
-                    spec.output_id,
-                    width=plan.width,
-                    height=plan.height,
-                    render_context=render_context,
-                )
-            except Exception as exc:
-                filename = files[index].name
-                raise TextureSetExportError(
-                    f"Rendering output {output_by_id[spec.output_id].name!r} "
-                    f"for {filename} failed: {exc}"
-                ) from exc
+        requested_ids = list(spec.output_id for spec in specs)
+        requested_ids.extend(
+            source.source_output_id
+            for packed in plan.packed_maps
+            for source in packed.channels.values()
+            if source.source_output_id is not None
+        )
+        try:
+            rendered: dict[str, MaterialOutputResult] = self.engine.render_outputs(
+                recipe,
+                requested_ids,
+                width=plan.width,
+                height=plan.height,
+                render_context=render_context,
+            )
+        except Exception as exc:
+            names = ", ".join(output_by_id[item].name for item in dict.fromkeys(requested_ids))
+            raise TextureSetExportError(f"Rendering texture-set outputs {names!r} failed: {exc}") from exc
         for packed in plan.packed_maps:
             if progress:
                 progress(f"Packing {packed.name}…")
-            for source in packed.channels.values():
-                if source.source_output_id and source.source_output_id not in rendered:
-                    try:
-                        rendered[source.source_output_id] = self.engine.render_output(
-                            recipe,
-                            source.source_output_id,
-                            width=plan.width,
-                            height=plan.height,
-                            render_context=render_context,
-                        )
-                    except Exception as exc:
-                        raise TextureSetExportError(
-                            f"Rendering source output "
-                            f"{output_by_id[source.source_output_id].name!r} "
-                            f"for packed map {packed.name!r} failed: {exc}"
-                        ) from exc
 
         written: list[Path] = []
         file_index = 0

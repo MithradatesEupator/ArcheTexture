@@ -101,6 +101,21 @@ def apply_material_preset(recipe: ProjectRecipe, preset_name: str) -> tuple[str,
         recipe.outputs.append(output)
         existing.add(semantic)
         added.append(output.output_id)
+    height = next((item for item in recipe.outputs if item.semantic == "height"), None)
+    normal = next((item for item in recipe.outputs if item.semantic == "normal"), None)
+    if height is not None and normal is not None and normal.output_id in added and normal.layers:
+        layer = normal.layers[0]
+        transform = REGISTRY.get("transform.height_to_normal")
+        layer.source = OperationInstance(
+            f"source-{uuid.uuid4().hex[:12]}", "generator.output_scalar", 1,
+            parameters={"target": height.output_id, "mode": "Direct"},
+        )
+        layer.transforms = [
+            OperationInstance(
+                f"op-{uuid.uuid4().hex[:12]}", transform.identifier, transform.version,
+                parameters={spec.identifier: spec.default for spec in transform.parameter_specs},
+            )
+        ]
     return tuple(added)
 
 
