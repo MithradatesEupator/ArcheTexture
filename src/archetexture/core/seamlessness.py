@@ -74,8 +74,14 @@ def _layer_state(layer: LayerRecipe, registry: OperationDefinitionSet) -> bool |
     return state
 
 
-def recipe_seamlessness(recipe: ProjectRecipe, registry: OperationDefinitionSet = REGISTRY) -> str:
-    """Conservatively report whether the visible composite is proven tile-periodic."""
+def recipe_seamlessness(
+    recipe: ProjectRecipe,
+    registry: OperationDefinitionSet = REGISTRY,
+    *,
+    output_id: str | None = None,
+) -> str:
+    """Conservatively report seamlessness for one selected material output."""
+    output = recipe.output(output_id) if output_id is not None else recipe.outputs[0]
 
     def with_mask(layer: LayerRecipe) -> bool | None:
         state = _layer_state(layer, registry)
@@ -93,7 +99,7 @@ def recipe_seamlessness(recipe: ProjectRecipe, registry: OperationDefinitionSet 
             return True
         return None
 
-    states = [with_mask(layer) for layer in recipe.layers if layer.enabled and layer.opacity > 0.0]
+    states = [with_mask(layer) for layer in output.layers if layer.enabled and layer.opacity > 0.0]
     if not states:
         return "Unknown"
     if any(state is False for state in states):

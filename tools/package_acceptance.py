@@ -102,7 +102,7 @@ def main() -> int:
         project_path = work / "acceptance.archetexture"
         save_project(recipe, project_path)
         reopened = load_project(project_path)
-        assert reopened.schema_version == 4
+        assert reopened.schema_version == 5
         assert reopened.width == 48 and reopened.height == 40
         image_path = work / "acceptance.png"
         ImageExporter().export_png(reopened, image_path)

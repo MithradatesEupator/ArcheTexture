@@ -39,6 +39,9 @@ class LayersPanel(QWidget):
     addMaskRequested = Signal(str)
     addImageMaskRequested = Signal(str)
     maskNavigateRequested = Signal(str)
+    copyToOutputRequested = Signal(str)
+    moveToOutputRequested = Signal(str)
+    createOutputRequested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +72,13 @@ class LayersPanel(QWidget):
         order.addWidget(self.up_button)
         order.addWidget(self.down_button)
         layout.addLayout(order)
+        transfer = QHBoxLayout()
+        self.copy_output_button = QPushButton("Copy to Output…")
+        self.move_output_button = QPushButton("Move to Output…")
+        self.create_output_button = QPushButton("New Output from Layer")
+        for button in (self.copy_output_button, self.move_output_button, self.create_output_button):
+            transfer.addWidget(button)
+        layout.addLayout(transfer)
         self.opacity = _OpacitySpinBox()
         self.opacity.setRange(0.0, 1.0)
         self.opacity.setDecimals(2)
@@ -85,6 +95,9 @@ class LayersPanel(QWidget):
         self.remove_button.clicked.connect(self._remove)
         self.up_button.clicked.connect(lambda: self._move(-1))
         self.down_button.clicked.connect(lambda: self._move(1))
+        self.copy_output_button.clicked.connect(self._copy_to_output)
+        self.move_output_button.clicked.connect(self._move_to_output)
+        self.create_output_button.clicked.connect(self._create_output)
         self.opacity.valueChanged.connect(self._opacity_changed)
         self.blend.currentIndexChanged.connect(self._blend_changed)
         self.mask_combo = QComboBox(self)
@@ -116,13 +129,16 @@ class LayersPanel(QWidget):
         self.clear_mask_button.clicked.connect(lambda: self._set_mask(None))
         self.setMinimumWidth(230)
 
-    def set_recipe(self, recipe: ProjectRecipe, selected_id: str | None) -> None:
+    def set_recipe(
+        self, recipe: ProjectRecipe, selected_id: str | None, output_id: str | None = None
+    ) -> None:
+        layers = recipe.output(output_id).layers if output_id else recipe.layers
         self._syncing = True
         self.layer_list.blockSignals(True)
         self.layer_list.clear()
         self._known = {}
         selected = None
-        for layer in recipe.layers:
+        for layer in layers:
             item = QListWidgetItem(layer.name)
             item.setData(Qt.ItemDataRole.UserRole, layer.layer_id)
             item.setFlags(
@@ -135,7 +151,7 @@ class LayersPanel(QWidget):
                 selected = item
         if selected:
             self.layer_list.setCurrentItem(selected)
-        layer = next((item for item in recipe.layers if item.layer_id == selected_id), None)
+        layer = next((item for item in layers if item.layer_id == selected_id), None)
         self.opacity.setEnabled(layer is not None)
         self.blend.setEnabled(layer is not None)
         if layer:
@@ -162,8 +178,11 @@ class LayersPanel(QWidget):
         row = self.layer_list.currentRow()
         self.up_button.setEnabled(row > 0)
         self.down_button.setEnabled(row >= 0 and row < self.layer_list.count() - 1)
-        self.remove_button.setEnabled(len(recipe.layers) > 1 and row >= 0)
+        self.remove_button.setEnabled(len(layers) > 1 and row >= 0)
         self.duplicate_button.setEnabled(row >= 0)
+        self.copy_output_button.setEnabled(row >= 0)
+        self.move_output_button.setEnabled(row >= 0)
+        self.create_output_button.setEnabled(row >= 0)
 
     def _selected_id(self) -> str | None:
         item = self.layer_list.currentItem()
@@ -203,6 +222,21 @@ class LayersPanel(QWidget):
         target = self.layer_list.currentRow() + delta
         if identifier and 0 <= target < self.layer_list.count():
             self.moved.emit(identifier, target)
+
+    def _copy_to_output(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.copyToOutputRequested.emit(identifier)
+
+    def _move_to_output(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.moveToOutputRequested.emit(identifier)
+
+    def _create_output(self) -> None:
+        identifier = self._selected_id()
+        if identifier:
+            self.createOutputRequested.emit(identifier)
 
     def _opacity_changed(self, value: float) -> None:
         identifier = self._selected_id()

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Added a schema-v5 material model with independent semantic outputs and
+  project-global Control Fields.
+- Added grouped material output semantics, output-set presets, output switching,
+  and layer copy/move workflows.
+- Added direct float32 scalar compositing, grayscale previews, scalar PNG
+  export, texture-set planning, and packed-channel export.
+- Kept output-to-output references and physically correct normal-vector
+  blending deferred; normal outputs still use regular image blending.
+- The published 0.1.0 binary and its release description remain unchanged.
+
 ## 0.1.0 — Initial public alpha
 
 - Added a layered procedural texture workflow with generators, transforms,

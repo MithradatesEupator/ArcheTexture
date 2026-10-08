@@ -92,8 +92,11 @@ def test_project_relative_reference_round_trip_and_schema3_migration(tmp_path):
     recipe = _recipe(AssetReference("assets/sample.png", "project_relative"))
     save_project(recipe, project)
     payload = json.loads(project.read_text())
-    assert payload["schema_version"] == 4
-    assert payload["layers"][0]["source"]["parameters"]["asset"]["$type"] == "asset_reference"
+    assert payload["schema_version"] == 5
+    assert (
+        payload["outputs"][0]["layers"][0]["source"]["parameters"]["asset"]["$type"]
+        == "asset_reference"
+    )
     restored = load_project(project)
     assert restored == recipe
     assert RenderEngine().render(
@@ -125,7 +128,7 @@ def test_project_relative_reference_round_trip_and_schema3_migration(tmp_path):
             ],
         }
     )
-    assert old.schema_version == 4
+    assert old.schema_version == 5
 
 
 def test_missing_asset_loads_but_fails_at_render_boundary(tmp_path):

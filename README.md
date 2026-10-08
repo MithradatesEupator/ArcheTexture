@@ -3,9 +3,35 @@
 ArcheTexture is an early-development desktop workstation for building
 procedural textures from editable layers. It combines generators, transforms,
 masks, color ramps, and parameter modulation in a project that can be saved as
-readable JSON and exported as PNG.
+readable JSON and exported as PNG. The current multi-output development branch
+adds material channels and texture-set export; these features were not part of
+the published 0.1.0 binary.
 
 ## What it can do
+
+### Unreleased multi-output material workflow
+
+The ongoing development workspace stores one or more material outputs, each
+with its own layer stack. A semantic registry groups Base Color, Roughness,
+Metallic, Normal, Height, Ambient Occlusion, Emissive, legacy/specular,
+advanced, utility, and custom color/scalar outputs. Control Fields remain
+project-global and can drive layers in multiple outputs. Material presets add
+missing channels without replacing existing work.
+
+Scalar outputs keep normalized float32 values through compositing and export;
+their viewport representation is grayscale. Color outputs retain RGBA
+compositing. Normal outputs require RGBA-producing layers, with Height to
+Normal as the supported procedural path. Normal layers still use ordinary
+image blending, not vector-correct normal blending. Outputs do not yet have
+live references to one another; copying or moving a pipeline creates an
+independent layer stack.
+
+Texture-set export writes separate semantic maps and supports ORM, RMA, MRA,
+Unity HDRP-like mask packing, and custom RGBA channel packs. Missing packing
+sources fail preflight instead of being silently substituted. Scalar maps can
+be exported as 8-bit or 16-bit grayscale PNG; color and normal maps use 8-bit
+RGBA PNG. Semantic labels describe the data channel and do not claim
+renderer-specific physical fidelity.
 
 - Build a procedural layer stack with opacity, blend modes, and ordered
   transforms.
@@ -69,21 +95,24 @@ CI tests Python 3.12 on Ubuntu and Windows, and validates built packages.
 
 ## Projects and assets
 
-Project files are JSON documents with an explicit schema version. The current
-format is schema v4; versions v1, v2, and v3 migrate when opened. Render buffers
-and worker state are derived and are not saved. Images remain external assets:
-references can be absolute or relative to the project file, so a project and
+Project files are JSON documents with an explicit schema version. The released
+0.1.0 format was schema v4. The current multi-output development format is
+schema v5; versions v1 through v4 migrate when opened. Legacy
+projects become one Custom Color output to preserve their prior rendered
+meaning. Render buffers and worker state are derived and are not saved. Images
+remain external assets: references can be absolute or relative to the project file, so a project and
 its asset directory can be moved together. Image pixels are not embedded in
 project files.
 
 ## Development status and limitations
 
-Version 0.1.0 is an early development alpha. Some generators and operations
+The published version 0.1.0 is an early development alpha. Some generators and operations
 are not seamless, and the seam status is advisory. Normal-map layers use the
 regular image blend modes, which do not perform physically correct vector
-blending. ArcheTexture does not include a node editor, GPU acceleration,
-material-channel workflow, professional color management, or a general-purpose
-installer.
+blending. The developing material workflow has no live output-to-output
+dependencies, HDR/EXR, professional color management, or 3D material preview.
+ArcheTexture does not include a node editor, GPU acceleration, or a
+general-purpose installer.
 
 ## License
 

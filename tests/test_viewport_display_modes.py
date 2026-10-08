@@ -156,5 +156,5 @@ def test_registered_seamless_generators_are_selectable_from_the_real_source_edit
         assert index >= 0
         window.pipeline_panel.source_selector.setCurrentIndex(index)
         assert window._layer().source.operation_id == operation_id
-        assert window.seamlessness_label.text() == "Seamless: Yes"
+        assert window.seamlessness_label.text() == "Base Color · Color · Seamless: Yes"
     window.close()

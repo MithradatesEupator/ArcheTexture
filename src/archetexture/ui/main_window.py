@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 import sys
 import uuid
@@ -12,9 +13,11 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStyleFactory,
     QTabWidget,
@@ -38,6 +41,7 @@ from archetexture.core.pipeline_types import pipeline_output_type, valid_transfo
 from archetexture.core.recipe import (
     ControlFieldRecipe,
     LayerRecipe,
+    MaterialOutputRecipe,
     OperationInstance,
     ProjectRecipe,
 )
@@ -45,6 +49,7 @@ from archetexture.core.registry import REGISTRY
 from archetexture.core.seamlessness import recipe_seamlessness
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
+from archetexture.export.image_export import ImageExporter
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
 from archetexture.render.engine import RenderEngine
 from archetexture.render.session import RenderSession
@@ -52,6 +57,7 @@ from archetexture.ui.binding_dialog import BindingDialog
 from archetexture.ui.color_ramp_editor import ColorRampEditor
 from archetexture.ui.control_fields_editor import ControlFieldsEditor
 from archetexture.ui.export_image_dialog import ExportImageDialog
+from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
@@ -66,6 +72,7 @@ class _RenderBridge(QObject):
 
 class _ExportBridge(QObject):
     completed = Signal(object)
+    progress = Signal(str)
 
 
 class MainWindow(QMainWindow):
@@ -74,7 +81,8 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._application = application
         self.document = DocumentController(recipe)
-        self._selected_layer_id = self.document.recipe.layers[0].layer_id
+        self._selected_output_id = self.document.recipe.outputs[0].output_id
+        self._selected_layer_id = self._layers_for(self.document.recipe)[0].layer_id
         self._selected_instance_id: str | None = None
         self._selected_control_field_id: str | None = None
         self._closing = False
@@ -82,14 +90,19 @@ class MainWindow(QMainWindow):
         self._latest_render_result = None
         self._latest_displayed_request_id: int | None = None
         self.render_session = RenderSession()
+        render_engine = RenderEngine(session=self.render_session)
         self._export_bridge = _ExportBridge(self)
-        self.export_coordinator = ExportCoordinator(on_complete=self._export_bridge.completed.emit)
+        self.export_coordinator = ExportCoordinator(
+            exporter=ImageExporter(engine=render_engine),
+            on_complete=self._export_bridge.completed.emit,
+        )
         self._export_bridge.completed.connect(
             self._on_export_complete, Qt.ConnectionType.QueuedConnection
         )
+        self._export_bridge.progress.connect(self.statusBar().showMessage)
         self._render_bridge = _RenderBridge(self)
         self.render_coordinator = RenderCoordinator(
-            engine=RenderEngine(session=self.render_session),
+            engine=render_engine,
             on_complete=self._render_bridge.completed.emit,
         )
         self._render_bridge.completed.connect(
@@ -144,6 +157,9 @@ class MainWindow(QMainWindow):
         self.layers_panel.addMaskRequested.connect(self._add_layer_mask)
         self.layers_panel.addImageMaskRequested.connect(self._add_image_layer_mask)
         self.layers_panel.maskNavigateRequested.connect(self._navigate_to_layer_mask)
+        self.layers_panel.copyToOutputRequested.connect(self._copy_layer_to_output)
+        self.layers_panel.moveToOutputRequested.connect(self._move_layer_to_output)
+        self.layers_panel.createOutputRequested.connect(self._create_output_from_layer)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
@@ -152,6 +168,14 @@ class MainWindow(QMainWindow):
         view_row = QHBoxLayout()
         view_row.setContentsMargins(8, 2, 8, 0)
         view_row.addWidget(QLabel("View:"))
+        view_row.addWidget(QLabel("Output:"))
+        self.output_selector = QComboBox(center_panel)
+        self.output_selector.setObjectName("material-output-selector")
+        view_row.addWidget(self.output_selector)
+        self.output_selector.currentIndexChanged.connect(self._output_selection_changed)
+        self.manage_outputs_button = QPushButton("Manage Outputs…", center_panel)
+        self.manage_outputs_button.clicked.connect(self._manage_outputs)
+        view_row.addWidget(self.manage_outputs_button)
         self.viewport_mode_combo = QComboBox(center_panel)
         self.viewport_mode_combo.setObjectName("viewport-display-mode")
         for label, mode in (
@@ -217,6 +241,7 @@ class MainWindow(QMainWindow):
         self.save_action = file_menu.addAction("&Save")
         self.save_as_action = file_menu.addAction("Save &As…")
         self.export_action = file_menu.addAction("Export PNG…")
+        self.export_texture_set_action = file_menu.addAction("Export Texture Set…")
         self.import_image_action = file_menu.addAction("Import Image as Layer…")
         self.export_action.setShortcut("Ctrl+Shift+E")
         file_menu.addSeparator()
@@ -257,6 +282,7 @@ class MainWindow(QMainWindow):
         self.save_action.triggered.connect(lambda: self.save_project())
         self.save_as_action.triggered.connect(lambda: self.save_project(save_as=True))
         self.export_action.triggered.connect(self.export_png)
+        self.export_texture_set_action.triggered.connect(self.export_texture_set)
         self.import_image_action.triggered.connect(self._import_image_as_layer)
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo)
@@ -335,13 +361,57 @@ class MainWindow(QMainWindow):
 
     def _layer(self, recipe: ProjectRecipe | None = None) -> LayerRecipe:
         recipe = recipe or self.document.recipe
-        layer = next(
-            (item for item in recipe.layers if item.layer_id == self._selected_layer_id), None
-        )
+        layers = self._layers_for(recipe)
+        layer = next((item for item in layers if item.layer_id == self._selected_layer_id), None)
         if layer is None:
-            layer = recipe.layers[0]
+            layer = layers[0] if layers else None
+            if layer is None:
+                raise ValueError("The selected output has no editable layer")
             self._selected_layer_id = layer.layer_id
         return layer
+
+    def _selected_output(self, recipe: ProjectRecipe | None = None) -> MaterialOutputRecipe:
+        recipe = recipe or self.document.recipe
+        for output in recipe.outputs:
+            if output.output_id == self._selected_output_id:
+                return output
+        self._selected_output_id = recipe.outputs[0].output_id
+        return recipe.outputs[0]
+
+    def _output_selection_changed(self, index: int) -> None:
+        output_id = self.output_selector.itemData(index)
+        if not output_id or output_id == self._selected_output_id:
+            return
+        self._selected_output_id = str(output_id)
+        output = self._selected_output()
+        self._selected_layer_id = output.layers[0].layer_id if output.layers else ""
+        self._selected_instance_id = output.layers[0].source.instance_id if output.layers else None
+        self._refresh_document(request_render=True, reset_ramp_selection=True)
+
+    def _manage_outputs(self) -> None:
+        from archetexture.ui.output_manager import OutputManagerDialog
+
+        recipe = self.document.recipe
+        dialog = OutputManagerDialog(recipe, self._selected_output_id, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self._selected_output_id = dialog.selected_output_id
+        self._selected_layer_id = ""
+        self._selected_instance_id = None
+        self._commit_recipe(dialog.recipe, refresh_properties=True)
+
+    def _layers_for(self, recipe: ProjectRecipe) -> list[LayerRecipe]:
+        if not recipe.outputs:
+            return []
+        output = next(
+            (item for item in recipe.outputs if item.output_id == self._selected_output_id),
+            recipe.outputs[0],
+        )
+        return output.layers
+
+    @staticmethod
+    def _all_layers(recipe: ProjectRecipe) -> list[LayerRecipe]:
+        return [layer for output in recipe.outputs for layer in output.layers]
 
     def _refresh_document(
         self,
@@ -351,13 +421,25 @@ class MainWindow(QMainWindow):
         reset_ramp_selection: bool = False,
     ) -> None:
         recipe = self.document.recipe
+        output = self._selected_output(recipe)
         layer = self._layer(recipe)
-        self.seamlessness_label.setText(f"Seamless: {recipe_seamlessness(recipe)}")
+        self.seamlessness_label.setText(
+            f"{output.name} · {output.value_type.title()} · Seamless: "
+            f"{recipe_seamlessness(recipe, output_id=output.output_id)}"
+        )
+        self.output_selector.blockSignals(True)
+        self.output_selector.clear()
+        for item in recipe.outputs:
+            self.output_selector.addItem(f"{item.name} · {item.value_type.title()}", item.output_id)
+        self.output_selector.setCurrentIndex(
+            max(0, self.output_selector.findData(output.output_id))
+        )
+        self.output_selector.blockSignals(False)
         if self._selected_instance_id is None or not self._contains_instance(
             recipe, self._selected_instance_id
         ):
             self._selected_instance_id = layer.source.instance_id if layer.source else None
-        self.layers_panel.set_recipe(recipe, self._selected_layer_id)
+        self.layers_panel.set_recipe(recipe, self._selected_layer_id, output.output_id)
         mask_index = self.viewport_mode_combo.findData("mask_preview")
         if mask_index >= 0:
             masked = layer.mask is not None
@@ -375,7 +457,10 @@ class MainWindow(QMainWindow):
         self.color_ramp_editor.set_ramp(
             layer.color_ramp,
             reset_selection=reset_ramp_selection,
-            applicable=pipeline_output_type(layer.source, layer.transforms) == "scalar",
+            applicable=(
+                output.value_type == "color"
+                and pipeline_output_type(layer.source, layer.transforms) == "scalar"
+            ),
         )
         if refresh_properties:
             self._refresh_property_editor(recipe)
@@ -386,7 +471,9 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _contains_instance(recipe: ProjectRecipe, instance_id: str) -> bool:
         instances = [
-            instance for layer in recipe.layers for instance in [layer.source, *layer.transforms]
+            instance
+            for layer in MainWindow._all_layers(recipe)
+            for instance in [layer.source, *layer.transforms]
         ]
         return any(item is not None and item.instance_id == instance_id for item in instances)
 
@@ -422,12 +509,18 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         recipe = recipe or self.document.recipe
+        render_recipe = copy.deepcopy(recipe)
+        selected = next(
+            (item for item in render_recipe.outputs if item.output_id == self._selected_output_id),
+            render_recipe.outputs[0],
+        )
+        render_recipe.outputs = [selected]
         self.statusBar().showMessage("Rendering…")
         try:
             self.render_coordinator.request(
-                recipe,
-                width=recipe.width,
-                height=recipe.height,
+                render_recipe,
+                width=render_recipe.width,
+                height=render_recipe.height,
                 render_context=RenderContext(self.document.project_path),
             )
         except Exception as exc:
@@ -496,8 +589,13 @@ class MainWindow(QMainWindow):
 
     def _start_export(self, destination: str | Path, width: int, height: int) -> bool:
         try:
+            recipe = copy.deepcopy(self.document.recipe)
+            selected = next(
+                item for item in recipe.outputs if item.output_id == self._selected_output_id
+            )
+            recipe.outputs = [selected]
             self.export_coordinator.request(
-                self.document.recipe,
+                recipe,
                 destination,
                 width=width,
                 height=height,
@@ -515,12 +613,36 @@ class MainWindow(QMainWindow):
         if self._closing:
             return
         self.export_action.setEnabled(True)
+        self.export_texture_set_action.setEnabled(True)
         self._export_status_text = None
         if outcome.error is not None:
             self.statusBar().showMessage("PNG export failed")
             QMessageBox.critical(self, "Export failed", str(outcome.error))
             return
-        self.statusBar().showMessage(f"Exported {outcome.destination.name}", 5000)
+        if outcome.files:
+            self.statusBar().showMessage(f"Exported {len(outcome.files)} texture-set maps", 5000)
+        else:
+            self.statusBar().showMessage(f"Exported {outcome.destination.name}", 5000)
+
+    def export_texture_set(self, *_args) -> bool:
+        dialog = ExportTextureSetDialog(self.document.recipe, self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return False
+        try:
+            self.export_coordinator.request_texture_set(
+                self.document.recipe,
+                dialog.plan,
+                render_context=RenderContext(self.document.project_path),
+                progress=self._export_bridge.progress.emit,
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Texture-set export failed", str(exc))
+            return False
+        self.export_action.setEnabled(False)
+        self.export_texture_set_action.setEnabled(False)
+        self._export_status_text = "Exporting texture set…"
+        self.statusBar().showMessage(self._export_status_text)
+        return True
 
     def _commit_recipe(
         self,
@@ -697,7 +819,8 @@ class MainWindow(QMainWindow):
         )
 
     def _select_layer(self, layer_id: str) -> None:
-        if not any(layer.layer_id == layer_id for layer in self.document.recipe.layers):
+        recipe = self.document.recipe
+        if not any(layer.layer_id == layer_id for layer in self._layers_for(recipe)):
             return
         self._selected_layer_id = layer_id
         layer = self._layer()
@@ -711,11 +834,11 @@ class MainWindow(QMainWindow):
     def _add_layer(self) -> None:
         recipe = self.document.recipe
         number = 1
-        names = {layer.name for layer in recipe.layers}
+        names = {layer.name for layer in self._layers_for(recipe)}
         while f"Layer {number}" in names:
             number += 1
         layer_id = f"layer-{uuid.uuid4().hex[:12]}"
-        recipe.layers.append(
+        self._layers_for(recipe).append(
             LayerRecipe(
                 layer_id,
                 f"Layer {number}",
@@ -728,21 +851,22 @@ class MainWindow(QMainWindow):
             )
         )
         self._selected_layer_id = layer_id
-        self._selected_instance_id = recipe.layers[-1].source.instance_id
+        self._selected_instance_id = self._layers_for(recipe)[-1].source.instance_id
         self._commit_recipe(recipe, self._selected_instance_id)
 
     def _remove_layer(self, layer_id: str) -> None:
         recipe = self.document.recipe
-        if len(recipe.layers) <= 1:
+        if len(self._layers_for(recipe)) <= 1:
             self.statusBar().showMessage("A project must keep at least one layer", 5000)
             return
         index = next(
-            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+            (i for i, layer in enumerate(self._layers_for(recipe)) if layer.layer_id == layer_id),
+            None,
         )
         if index is None:
             return
-        del recipe.layers[index]
-        selected = recipe.layers[min(index, len(recipe.layers) - 1)]
+        del self._layers_for(recipe)[index]
+        selected = self._layers_for(recipe)[min(index, len(self._layers_for(recipe)) - 1)]
         self._selected_layer_id = selected.layer_id
         self._selected_instance_id = selected.source.instance_id
         self._commit_recipe(recipe, self._selected_instance_id)
@@ -752,23 +876,121 @@ class MainWindow(QMainWindow):
 
         recipe = self.document.recipe
         index = next(
-            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+            (i for i, layer in enumerate(self._layers_for(recipe)) if layer.layer_id == layer_id),
+            None,
         )
         if index is None:
             return
-        duplicate = copy.deepcopy(recipe.layers[index])
+        duplicate = copy.deepcopy(self._layers_for(recipe)[index])
         duplicate.layer_id = f"layer-{uuid.uuid4().hex[:12]}"
         duplicate.name = f"{duplicate.name} Copy"
         for instance in [duplicate.source, *duplicate.transforms]:
             instance.instance_id = f"op-{uuid.uuid4().hex[:12]}"
-        recipe.layers.insert(index + 1, duplicate)
+        self._layers_for(recipe).insert(index + 1, duplicate)
         self._selected_layer_id = duplicate.layer_id
         self._selected_instance_id = duplicate.source.instance_id
         self._commit_recipe(recipe, self._selected_instance_id)
 
+    @staticmethod
+    def _clone_layer(layer: LayerRecipe) -> LayerRecipe:
+        duplicate = copy.deepcopy(layer)
+        duplicate.layer_id = f"layer-{uuid.uuid4().hex[:12]}"
+        for instance in [duplicate.source, *duplicate.transforms]:
+            instance.instance_id = f"op-{uuid.uuid4().hex[:12]}"
+        duplicate.name = f"{duplicate.name} Copy"
+        return duplicate
+
+    def _choose_output(self, recipe: ProjectRecipe, title: str) -> MaterialOutputRecipe | None:
+        choices = [
+            (f"{output.name} · {output.value_type.title()}", output.output_id)
+            for output in recipe.outputs
+            if output.output_id != self._selected_output_id
+        ]
+        if not choices:
+            self.statusBar().showMessage("Add another output first", 4000)
+            return None
+        label, accepted = QInputDialog.getItem(
+            self, title, "Target output:", [item[0] for item in choices], 0, False
+        )
+        if not accepted:
+            return None
+        output_id = next(identifier for text, identifier in choices if text == label)
+        return recipe.output(output_id)
+
+    def _copy_layer_to_output(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
+        target = self._choose_output(recipe, "Copy Layer to Output")
+        if layer is None or target is None:
+            return
+        result_type = pipeline_output_type(layer.source, layer.transforms)
+        if (
+            target.value_type == "scalar"
+            and (result_type != "scalar" or layer.color_ramp is not None)
+        ) or (target.value_type == "normal" and result_type != "rgba"):
+            QMessageBox.warning(
+                self, "Incompatible layer", "This layer does not match the target output type."
+            )
+            return
+        target.layers.append(self._clone_layer(layer))
+        self._commit_recipe(recipe)
+
+    def _move_layer_to_output(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        source_output = self._selected_output(recipe)
+        layer = next((item for item in source_output.layers if item.layer_id == layer_id), None)
+        target = self._choose_output(recipe, "Move Layer to Output")
+        if layer is None or target is None:
+            return
+        if len(source_output.layers) <= 1:
+            QMessageBox.information(
+                self, "Keep one layer", "Copy this layer or add another before moving it."
+            )
+            return
+        result_type = pipeline_output_type(layer.source, layer.transforms)
+        if (
+            target.value_type == "scalar"
+            and (result_type != "scalar" or layer.color_ramp is not None)
+        ) or (target.value_type == "normal" and result_type != "rgba"):
+            QMessageBox.warning(
+                self, "Incompatible layer", "This layer does not match the target output type."
+            )
+            return
+        source_output.layers.remove(layer)
+        target.layers.append(layer)
+        self._selected_output_id = target.output_id
+        self._selected_layer_id = layer.layer_id
+        self._selected_instance_id = layer.source.instance_id
+        self._commit_recipe(recipe, self._selected_instance_id)
+
+    def _create_output_from_layer(self, layer_id: str) -> None:
+        recipe = self.document.recipe
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
+        if layer is None:
+            return
+        result_type = pipeline_output_type(layer.source, layer.transforms)
+        if result_type not in {"scalar", "rgba"}:
+            QMessageBox.warning(
+                self, "Invalid layer", "The selected layer has no valid output type."
+            )
+            return
+        semantic = "custom_scalar" if result_type == "scalar" else "custom_color"
+        output = MaterialOutputRecipe(
+            f"output-{uuid.uuid4().hex[:12]}",
+            f"{layer.name} Output",
+            semantic,
+            result_type if result_type == "scalar" else "color",
+            [self._clone_layer(layer)],
+        )
+        recipe.outputs.append(output)
+        self._selected_output_id = output.output_id
+        self._selected_layer_id = output.layers[0].layer_id
+        self._selected_instance_id = output.layers[0].source.instance_id
+        self._commit_recipe(recipe, self._selected_instance_id)
+
     def _rename_layer(self, layer_id: str, name: str) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         name = name.strip()
         if layer is None or not name or layer.name == name:
             self._refresh_document(request_render=False)
@@ -778,7 +1000,7 @@ class MainWindow(QMainWindow):
 
     def _layer_enabled(self, layer_id: str, enabled: bool) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is not None and layer.enabled != enabled:
             layer.enabled = enabled
             self._commit_recipe(recipe)
@@ -786,30 +1008,31 @@ class MainWindow(QMainWindow):
     def _layer_moved(self, layer_id: str, target_index: int) -> None:
         recipe = self.document.recipe
         old_index = next(
-            (i for i, layer in enumerate(recipe.layers) if layer.layer_id == layer_id), None
+            (i for i, layer in enumerate(self._layers_for(recipe)) if layer.layer_id == layer_id),
+            None,
         )
-        if old_index is None or not 0 <= target_index < len(recipe.layers):
+        if old_index is None or not 0 <= target_index < len(self._layers_for(recipe)):
             return
-        recipe.layers.insert(target_index, recipe.layers.pop(old_index))
+        self._layers_for(recipe).insert(target_index, self._layers_for(recipe).pop(old_index))
         self._commit_recipe(recipe)
 
     def _layer_opacity_changed(self, layer_id: str, opacity: float) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is not None and layer.opacity != opacity:
             layer.opacity = opacity
             self._commit_recipe(recipe)
 
     def _layer_blend_changed(self, layer_id: str, mode: str) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is not None and layer.blend_mode != mode:
             layer.blend_mode = mode
             self._commit_recipe(recipe)
 
     def _layer_mask_changed(self, layer_id: str, source_id: str | None) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None:
             return
         if source_id is None:
@@ -826,7 +1049,7 @@ class MainWindow(QMainWindow):
 
     def _edit_layer_mask(self, layer_id: str) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None or layer.mask is None:
             return
         spec = ParameterSpec("mask", "Layer mask", ParameterType.PERCENT, 1.0, 0.0, 1.0)
@@ -837,9 +1060,8 @@ class MainWindow(QMainWindow):
         self._commit_recipe(recipe)
 
     def _navigate_to_layer_mask(self, layer_id: str) -> None:
-        layer = next(
-            (item for item in self.document.recipe.layers if item.layer_id == layer_id), None
-        )
+        recipe = self.document.recipe
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None or layer.mask is None:
             return
         self.right_tabs.setCurrentWidget(self.control_fields_editor)
@@ -848,7 +1070,7 @@ class MainWindow(QMainWindow):
 
     def _add_layer_mask(self, layer_id: str) -> None:
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None:
             return
         stem = re.sub(r"[^A-Za-z0-9]+", "-", layer.name).strip("-").lower() or layer_id
@@ -943,7 +1165,7 @@ class MainWindow(QMainWindow):
             },
         )
         layer = LayerRecipe(f"layer-{uuid.uuid4().hex[:12]}", name, source, color_ramp=None)
-        recipe.layers.append(layer)
+        self._layers_for(recipe).append(layer)
         self._selected_layer_id, self._selected_instance_id = layer.layer_id, source.instance_id
         self._commit_recipe(recipe, source.instance_id)
 
@@ -952,7 +1174,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         recipe = self.document.recipe
-        layer = next((item for item in recipe.layers if item.layer_id == layer_id), None)
+        layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None:
             return
         stem = re.sub(r"[^A-Za-z0-9]+", "-", layer.name).strip("-").lower() or "layer"
@@ -1040,14 +1262,16 @@ class MainWindow(QMainWindow):
             return
         recipe.control_fields[new_id] = recipe.control_fields.pop(old_id)
         instances = [
-            instance for layer in recipe.layers for instance in [layer.source, *layer.transforms]
+            instance
+            for layer in self._all_layers(recipe)
+            for instance in [layer.source, *layer.transforms]
         ]
         for control in recipe.control_fields.values():
             instances.extend((control.source, *control.transforms))
         for instance in instances:
             if instance is not None:
                 self._rewrite_instance_bindings(instance, old_id, new_id)
-        for layer in recipe.layers:
+        for layer in self._all_layers(recipe):
             if layer.mask is not None:
                 layer.mask = self._rewrite_binding_value(layer.mask, old_id, new_id)
         self._commit_recipe(recipe, control_field_id=new_id)
@@ -1064,12 +1288,13 @@ class MainWindow(QMainWindow):
                 yield from MainWindow._iter_control_bindings(item, f"{path}[{index}]")
 
     def _first_control_reference(self, recipe: ProjectRecipe, identifier: str) -> str | None:
-        for layer in recipe.layers:
+        all_layers = self._all_layers(recipe)
+        for layer in all_layers:
             if layer.mask is not None and layer.mask.source_id == identifier:
                 return f"{layer.name} mask"
         instances = []
-        for layer in recipe.layers:
-            label = "main source" if len(recipe.layers) == 1 else f"{layer.name} source"
+        for layer in all_layers:
+            label = "main source" if len(all_layers) == 1 else f"{layer.name} source"
             instances.append((label, layer.source))
             instances.extend(
                 (f"{layer.name} transform {item.operation_id}", item) for item in layer.transforms
@@ -1295,12 +1520,13 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.new_document()
+        self._selected_output_id = recipe.outputs[0].output_id
         self.render_session.clear()
         self._latest_render_result = None
         self._latest_displayed_request_id = None
         self.viewport.set_error("Rendering…")
-        self._selected_layer_id = recipe.layers[0].layer_id
-        self._selected_instance_id = recipe.layers[0].source.instance_id
+        self._selected_layer_id = self._layers_for(recipe)[0].layer_id
+        self._selected_instance_id = self._layers_for(recipe)[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 
@@ -1323,12 +1549,13 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return False
         recipe = self.document.replace_with_project(candidate)
+        self._selected_output_id = recipe.outputs[0].output_id
         self.render_session.clear()
         self._latest_render_result = None
         self._latest_displayed_request_id = None
         self.viewport.set_error("Rendering…")
-        self._selected_layer_id = recipe.layers[0].layer_id
-        self._selected_instance_id = recipe.layers[0].source.instance_id
+        self._selected_layer_id = self._layers_for(recipe)[0].layer_id
+        self._selected_instance_id = self._layers_for(recipe)[0].source.instance_id
         self._refresh_document(request_render=True, reset_ramp_selection=True)
         return True
 

@@ -13,12 +13,13 @@ from archetexture.core.parameters import ControlFieldBinding, ControlFieldMappin
 from archetexture.core.recipe import (
     ControlFieldRecipe,
     LayerRecipe,
+    MaterialOutputRecipe,
     OperationInstance,
     ProjectRecipe,
 )
 from archetexture.core.validation import ensure_valid_recipe
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 class ProjectFormatError(ValueError):
@@ -208,17 +209,51 @@ def _decode_layer(payload: Any, index: int, *, supports_masks: bool = True) -> L
     )
 
 
+def _encode_output(output: MaterialOutputRecipe) -> dict[str, Any]:
+    return {
+        "output_id": output.output_id,
+        "name": output.name,
+        "semantic": output.semantic,
+        "value_type": output.value_type,
+        "enabled": output.enabled,
+        "export_suffix": output.export_suffix,
+        "clear_value": _encode_value(output.clear_value),
+        "layers": [_encode_layer(layer) for layer in output.layers],
+    }
+
+
+def _decode_output(payload: Any, index: int) -> MaterialOutputRecipe:
+    if not isinstance(payload, dict):
+        raise ProjectFormatError(f"outputs[{index}] must be an object")
+    layers = payload.get("layers", [])
+    if not isinstance(layers, list):
+        raise ProjectFormatError(f"outputs[{index}].layers must be an array")
+    try:
+        return MaterialOutputRecipe(
+            output_id=payload.get("output_id", ""),
+            name=payload.get("name", ""),
+            semantic=payload.get("semantic", ""),
+            value_type=payload.get("value_type", ""),
+            layers=[_decode_layer(layer, layer_index) for layer_index, layer in enumerate(layers)],
+            enabled=payload.get("enabled", True),
+            export_suffix=payload.get("export_suffix"),
+            clear_value=_decode_value(payload.get("clear_value")),
+        )
+    except ValueError as exc:
+        raise ProjectFormatError(f"outputs[{index}] has invalid semantic metadata: {exc}") from exc
+
+
 def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
     if not isinstance(data, dict):
         raise ProjectFormatError("Project root must be a JSON object")
-    version = data.get("schema_version", CURRENT_SCHEMA_VERSION)
+    version = data.get("schema_version", 4)
     if not isinstance(version, int) or isinstance(version, bool):
         raise ProjectFormatError("schema_version must be an integer")
     if version > CURRENT_SCHEMA_VERSION:
         raise UnsupportedSchemaVersion(
             f"Project schema {version} is newer than supported schema {CURRENT_SCHEMA_VERSION}"
         )
-    if version not in (1, 2, 3, CURRENT_SCHEMA_VERSION):
+    if version not in (1, 2, 3, 4, CURRENT_SCHEMA_VERSION):
         raise UnsupportedSchemaVersion(f"Unsupported project schema version: {version}")
     control_fields = data.get("control_fields", {})
     if not isinstance(control_fields, dict):
@@ -241,7 +276,7 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
             if source is not None
             else []
         )
-    else:
+    elif version in (2, 3, 4):
         raw_layers = data.get("layers")
         if not isinstance(raw_layers, list):
             raise ProjectFormatError("layers must be an array")
@@ -249,12 +284,20 @@ def migrate_recipe(data: dict[str, Any]) -> ProjectRecipe:
             _decode_layer(item, index, supports_masks=version >= 3)
             for index, item in enumerate(raw_layers)
         ]
+    if version == CURRENT_SCHEMA_VERSION:
+        raw_outputs = data.get("outputs")
+        if not isinstance(raw_outputs, list):
+            raise ProjectFormatError("outputs must be an array")
+        outputs = [_decode_output(item, index) for index, item in enumerate(raw_outputs)]
+    else:
+        # Older projects have one stack with unknown intent; preserve it as custom color.
+        outputs = [MaterialOutputRecipe("output-1", "Texture", "custom_color", "color", layers)]
     recipe = ProjectRecipe(
         schema_version=CURRENT_SCHEMA_VERSION,
         width=data.get("width", 256),
         height=data.get("height", 256),
         seed=data.get("seed", 0),
-        layers=layers,
+        outputs=outputs,
         control_fields={key: _decode_control(value) for key, value in control_fields.items()},
     )
     ensure_valid_recipe(recipe)
@@ -278,7 +321,7 @@ def _encode_recipe(recipe: ProjectRecipe) -> dict[str, Any]:
         "width": recipe.width,
         "height": recipe.height,
         "seed": recipe.seed,
-        "layers": [_encode_layer(item) for item in recipe.layers],
+        "outputs": [_encode_output(item) for item in recipe.outputs],
         "control_fields": {
             key: _encode_control(recipe.control_fields[key])
             for key in sorted(recipe.control_fields)

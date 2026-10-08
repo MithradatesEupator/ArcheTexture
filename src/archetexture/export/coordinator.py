@@ -10,6 +10,7 @@ from typing import Callable
 from archetexture.core.assets import RenderContext
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.export.image_export import ImageExporter, validate_export_dimension
+from archetexture.export.texture_set import TextureSetExporter, TextureSetExportPlan
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,7 @@ class ExportOutcome:
     width: int
     height: int
     error: Exception | None = None
+    files: tuple[Path, ...] = ()
 
 
 class ExportCoordinator:
@@ -27,8 +29,13 @@ class ExportCoordinator:
         self,
         exporter: ImageExporter | None = None,
         on_complete: Callable[[ExportOutcome], None] | None = None,
+        *,
+        texture_set_exporter: TextureSetExporter | None = None,
     ):
         self.exporter = exporter or ImageExporter()
+        self.texture_set_exporter = texture_set_exporter or TextureSetExporter(
+            getattr(self.exporter, "engine", None)
+        )
         self.on_complete = on_complete
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="archetexture-export")
         self._lock = Lock()
@@ -63,6 +70,42 @@ class ExportCoordinator:
         future = self._executor.submit(self.exporter.export_png, snapshot, path, **kwargs)
         future.add_done_callback(lambda done: self._finished(done, path, width, height))
         return future
+
+    def request_texture_set(
+        self,
+        recipe: ProjectRecipe,
+        plan: TextureSetExportPlan,
+        *,
+        render_context: RenderContext | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> Future:
+        snapshot = deepcopy(recipe)
+        self.texture_set_exporter.preflight(snapshot, plan)
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Export coordinator is closed")
+            self._active += 1
+        future = self._executor.submit(
+            self.texture_set_exporter.export,
+            snapshot,
+            plan,
+            render_context=render_context,
+            progress=progress,
+        )
+        future.add_done_callback(lambda done: self._finished_texture_set(done, plan))
+        return future
+
+    def _finished_texture_set(self, future: Future, plan: TextureSetExportPlan) -> None:
+        try:
+            files = tuple(future.result())
+            outcome = ExportOutcome(Path(plan.destination), plan.width, plan.height, files=files)
+        except Exception as exc:
+            outcome = ExportOutcome(Path(plan.destination), plan.width, plan.height, exc)
+        finally:
+            with self._lock:
+                self._active -= 1
+        if self.on_complete is not None:
+            self.on_complete(outcome)
 
     def _finished(self, future: Future, path: Path, width: int, height: int) -> None:
         try:
