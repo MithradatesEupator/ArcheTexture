@@ -17,8 +17,8 @@ from archetexture.core.fields import (
     validate_scalar_field,
 )
 from archetexture.core.fingerprinting import structural_fingerprint
-from archetexture.core.output_dependencies import OUTPUT_REFERENCE_OPERATIONS
 from archetexture.core.operations import OperationDefinitionSet
+from archetexture.core.output_dependencies import OUTPUT_REFERENCE_OPERATIONS
 from archetexture.core.pipeline import _evaluate_pipeline, _Evaluation
 from archetexture.core.recipe import MaterialOutputRecipe, ProjectRecipe
 from archetexture.core.registry import REGISTRY
@@ -127,8 +127,13 @@ class RenderEngine:
         output_height = recipe.height if height is None else height
         context = render_context or RenderContext(asset_cache=self.session.asset_cache)
         evaluation = _Evaluation(
-            recipe, output_width, output_height, self.registry,
-            render_context=context, session=self.session, cache_enabled=use_cache,
+            recipe,
+            output_width,
+            output_height,
+            self.registry,
+            render_context=context,
+            session=self.session,
+            cache_enabled=use_cache,
         )
         return {
             output_id: self.render_output(
@@ -164,8 +169,13 @@ class RenderEngine:
             else render_context or RenderContext(asset_cache=self.session.asset_cache)
         )
         evaluation = _evaluation or _Evaluation(
-            recipe, output_width, output_height, self.registry,
-            render_context=context, session=self.session, cache_enabled=use_cache,
+            recipe,
+            output_width,
+            output_height,
+            self.registry,
+            render_context=context,
+            session=self.session,
+            cache_enabled=use_cache,
         )
         if output_id in evaluation.output_cache:
             return evaluation.output_cache[output_id]
@@ -174,8 +184,13 @@ class RenderEngine:
             raise ValueError("Output dependency cycle: " + " → ".join(cycle))
         evaluation.output_stack.append(output_id)
         evaluation.output_resolver = lambda target: self.render_output(
-            recipe, target, width=output_width, height=output_height,
-            render_context=context, use_cache=use_cache, _evaluation=evaluation,
+            recipe,
+            target,
+            width=output_width,
+            height=output_height,
+            render_context=context,
+            use_cache=use_cache,
+            _evaluation=evaluation,
         )
         composite = self._clear_buffer(output, output_height, output_width)
         scalar_result: ScalarField | None = None

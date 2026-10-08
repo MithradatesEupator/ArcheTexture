@@ -22,15 +22,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from archetexture.core.output_dependencies import (
-    output_direct_dependencies,
-    transitive_output_dependencies,
-)
 from archetexture.core.material_presets import (
     MATERIAL_PRESETS,
     apply_material_preset,
     duplicate_material_output,
     new_material_output,
+)
+from archetexture.core.output_dependencies import (
+    output_direct_dependencies,
+    transitive_output_dependencies,
 )
 from archetexture.core.outputs import OUTPUT_CATEGORIES, semantics_in_category
 from archetexture.core.recipe import LayerRecipe, OperationInstance, ProjectRecipe
@@ -263,13 +263,15 @@ class OutputManagerDialog(QDialog):
         if output is None:
             return
         dependents = [
-            item.name for item in self.recipe.outputs
+            item.name
+            for item in self.recipe.outputs
             if item.output_id != output.output_id
             and output.output_id in output_direct_dependencies(self.recipe, item.output_id)
         ]
         if dependents:
             QMessageBox.warning(
-                self, "Output is in use",
+                self,
+                "Output is in use",
                 f"Cannot delete {output.name}. Used by: " + ", ".join(dependents),
             )
             return
@@ -282,11 +284,17 @@ class OutputManagerDialog(QDialog):
 
     def _derive(self) -> None:
         helpers = (
-            "Normal from Height", "Glossiness from Roughness", "Roughness from Glossiness",
-            "Opacity from Base Color Alpha", "Height from Base Color Luminance",
-            "Custom Scalar from Output…", "Custom Color from Output…",
+            "Normal from Height",
+            "Glossiness from Roughness",
+            "Roughness from Glossiness",
+            "Opacity from Base Color Alpha",
+            "Height from Base Color Luminance",
+            "Custom Scalar from Output…",
+            "Custom Color from Output…",
         )
-        helper, accepted = QInputDialog.getItem(self, "Derive Output", "Workflow:", helpers, 0, False)
+        helper, accepted = QInputDialog.getItem(
+            self, "Derive Output", "Workflow:", helpers, 0, False
+        )
         if not accepted:
             return
         desired = {
@@ -306,9 +314,11 @@ class OutputManagerDialog(QDialog):
             "Height from Base Color Luminance": "base_color",
         }
         candidates = [
-            item for item in self.recipe.outputs
+            item
+            for item in self.recipe.outputs
             if item.output_id != self.selected_output_id
-            and self.selected_output_id not in transitive_output_dependencies(self.recipe, item.output_id)
+            and self.selected_output_id
+            not in transitive_output_dependencies(self.recipe, item.output_id)
         ]
         if desired:
             candidates = [item for item in candidates if item.value_type == desired]
@@ -317,10 +327,14 @@ class OutputManagerDialog(QDialog):
         if preferred_outputs:
             candidates = preferred_outputs
         if not candidates:
-            QMessageBox.information(self, "No source output", "Add a compatible source output first.")
+            QMessageBox.information(
+                self, "No source output", "Add a compatible source output first."
+            )
             return
         labels = [f"{item.name} · {item.value_type.title()}" for item in candidates]
-        label, accepted = QInputDialog.getItem(self, "Choose Source Output", "Output:", labels, 0, False)
+        label, accepted = QInputDialog.getItem(
+            self, "Choose Source Output", "Output:", labels, 0, False
+        )
         if not accepted:
             return
         target = candidates[labels.index(label)]
@@ -366,16 +380,24 @@ class OutputManagerDialog(QDialog):
             mode = "Direct" if target.value_type == "scalar" else "Luminance"
             transform_id = None
         source = OperationInstance(
-            f"source-{uuid.uuid4().hex[:12]}", source_operation, 1,
+            f"source-{uuid.uuid4().hex[:12]}",
+            source_operation,
+            1,
             parameters={"target": target.output_id, **({"mode": mode} if mode else {})},
         )
         transforms = []
         if transform_id:
             definition = REGISTRY.get(transform_id)
-            transforms.append(OperationInstance(
-                f"op-{uuid.uuid4().hex[:12]}", transform_id, definition.version,
-                parameters={spec.identifier: spec.default for spec in definition.parameter_specs},
-            ))
+            transforms.append(
+                OperationInstance(
+                    f"op-{uuid.uuid4().hex[:12]}",
+                    transform_id,
+                    definition.version,
+                    parameters={
+                        spec.identifier: spec.default for spec in definition.parameter_specs
+                    },
+                )
+            )
         output.layers[0] = LayerRecipe(
             f"layer-{uuid.uuid4().hex[:12]}", "Derived Layer", source, transforms
         )

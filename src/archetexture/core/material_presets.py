@@ -107,12 +107,16 @@ def apply_material_preset(recipe: ProjectRecipe, preset_name: str) -> tuple[str,
         layer = normal.layers[0]
         transform = REGISTRY.get("transform.height_to_normal")
         layer.source = OperationInstance(
-            f"source-{uuid.uuid4().hex[:12]}", "generator.output_scalar", 1,
+            f"source-{uuid.uuid4().hex[:12]}",
+            "generator.output_scalar",
+            1,
             parameters={"target": height.output_id, "mode": "Direct"},
         )
         layer.transforms = [
             OperationInstance(
-                f"op-{uuid.uuid4().hex[:12]}", transform.identifier, transform.version,
+                f"op-{uuid.uuid4().hex[:12]}",
+                transform.identifier,
+                transform.version,
                 parameters={spec.identifier: spec.default for spec in transform.parameter_specs},
             )
         ]

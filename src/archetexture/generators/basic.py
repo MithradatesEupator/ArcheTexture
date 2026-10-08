@@ -48,7 +48,9 @@ def radial_gradient(_input, parameters: Mapping[str, Any], width: int, height: i
     return ensure_normalized_scalar(normalized)
 
 
-def output_scalar(_input, parameters: Mapping[str, Any], width: int, height: int, _seed: int, resolver):
+def output_scalar(
+    _input, parameters: Mapping[str, Any], width: int, height: int, _seed: int, resolver
+):
     result = resolver(parameters["target"])
     mode = parameters["mode"]
     if result.scalar_field is not None:
@@ -77,7 +79,9 @@ def output_scalar(_input, parameters: Mapping[str, Any], width: int, height: int
     raise ValueError(f"Unsupported output extraction mode: {mode}")
 
 
-def output_color(_input, parameters: Mapping[str, Any], width: int, height: int, _seed: int, resolver):
+def output_color(
+    _input, parameters: Mapping[str, Any], width: int, height: int, _seed: int, resolver
+):
     result = resolver(parameters["target"])
     if result.scalar_field is not None:
         scalar = result.scalar_field

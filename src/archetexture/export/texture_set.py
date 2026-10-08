@@ -277,7 +277,9 @@ class TextureSetExporter:
             )
         except Exception as exc:
             names = ", ".join(output_by_id[item].name for item in dict.fromkeys(requested_ids))
-            raise TextureSetExportError(f"Rendering texture-set outputs {names!r} failed: {exc}") from exc
+            raise TextureSetExportError(
+                f"Rendering texture-set outputs {names!r} failed: {exc}"
+            ) from exc
         for packed in plan.packed_maps:
             if progress:
                 progress(f"Packing {packed.name}…")

@@ -47,18 +47,58 @@ def _spec(
 def builtin_definitions() -> tuple[OperationDefinition, ...]:
     return (
         OperationDefinition(
-            "generator.output_scalar", 1, "Material Output to Scalar", "Output",
-            "Reads another material output as a scalar field.", OperationType.GENERATOR, (), "scalar",
+            "generator.output_scalar",
+            1,
+            "Material Output to Scalar",
+            "Output",
+            "Reads another material output as a scalar field.",
+            OperationType.GENERATOR,
+            (),
+            "scalar",
             (
-                ParameterSpec("target", "Output", ParameterType.MATERIAL_OUTPUT, "", allows_modulation=False),
-                ParameterSpec("mode", "Mode", ParameterType.ENUM, "Direct", options=("Direct", "Luminance", "Red", "Green", "Blue", "Alpha", "Average RGB", "Minimum RGB", "Maximum RGB"), allows_modulation=False),
-            ), Seamlessness.PRESERVES, generators.output_scalar, requires_output_resolver=True,
+                ParameterSpec(
+                    "target", "Output", ParameterType.MATERIAL_OUTPUT, "", allows_modulation=False
+                ),
+                ParameterSpec(
+                    "mode",
+                    "Mode",
+                    ParameterType.ENUM,
+                    "Direct",
+                    options=(
+                        "Direct",
+                        "Luminance",
+                        "Red",
+                        "Green",
+                        "Blue",
+                        "Alpha",
+                        "Average RGB",
+                        "Minimum RGB",
+                        "Maximum RGB",
+                    ),
+                    allows_modulation=False,
+                ),
+            ),
+            Seamlessness.PRESERVES,
+            generators.output_scalar,
+            requires_output_resolver=True,
         ),
         OperationDefinition(
-            "generator.output_color", 1, "Material Output to Color", "Output",
-            "Reads another material output as RGBA, promoting scalar data to grayscale.", OperationType.GENERATOR, (), "rgba",
-            (ParameterSpec("target", "Output", ParameterType.MATERIAL_OUTPUT, "", allows_modulation=False),),
-            Seamlessness.PRESERVES, generators.output_color, requires_output_resolver=True,
+            "generator.output_color",
+            1,
+            "Material Output to Color",
+            "Output",
+            "Reads another material output as RGBA, promoting scalar data to grayscale.",
+            OperationType.GENERATOR,
+            (),
+            "rgba",
+            (
+                ParameterSpec(
+                    "target", "Output", ParameterType.MATERIAL_OUTPUT, "", allows_modulation=False
+                ),
+            ),
+            Seamlessness.PRESERVES,
+            generators.output_color,
+            requires_output_resolver=True,
         ),
         OperationDefinition(
             "generator.image",

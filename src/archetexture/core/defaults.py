@@ -105,9 +105,7 @@ def default_recipe() -> ProjectRecipe:
                 "scalar",
                 [_constant_layer("metallic", 0.0)],
             ),
-            MaterialOutputRecipe(
-                "normal", "Normal", "normal", "normal", [_normal_layer("height")]
-            ),
+            MaterialOutputRecipe("normal", "Normal", "normal", "normal", [_normal_layer("height")]),
             MaterialOutputRecipe(
                 "height", "Height", "height", "scalar", [_constant_layer("height", 0.5)]
             ),
@@ -142,7 +140,9 @@ def _normal_layer(height_output_id: str | None = None) -> LayerRecipe:
     )
     source = (
         OperationInstance(
-            "source-normal", "generator.output_scalar", 1,
+            "source-normal",
+            "generator.output_scalar",
+            1,
             parameters={"target": height_output_id, "mode": "Direct"},
         )
         if height_output_id

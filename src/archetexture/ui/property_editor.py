@@ -17,8 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.core.assets import AssetReference, RenderContext
-from archetexture.core.output_dependencies import transitive_output_dependencies
 from archetexture.core.operations import OperationDefinition, OperationType
+from archetexture.core.output_dependencies import transitive_output_dependencies
 from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance
 
@@ -83,11 +83,22 @@ class PropertyEditor(QWidget):
             if spec.type == ParameterType.MATERIAL_OUTPUT and isinstance(widget, QComboBox):
                 widget.clear()
                 for output in self._material_outputs:
-                    if output.output_id == self._current_output_id or output.output_id in self._cycle_targets:
+                    if (
+                        output.output_id == self._current_output_id
+                        or output.output_id in self._cycle_targets
+                    ):
                         continue
-                    if operation_id == "generator.output_scalar" and mode == "Direct" and output.value_type != "scalar":
+                    if (
+                        operation_id == "generator.output_scalar"
+                        and mode == "Direct"
+                        and output.value_type != "scalar"
+                    ):
                         continue
-                    if operation_id == "generator.output_scalar" and mode != "Direct" and output.value_type == "scalar":
+                    if (
+                        operation_id == "generator.output_scalar"
+                        and mode != "Direct"
+                        and output.value_type == "scalar"
+                    ):
                         continue
                     widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
                 index = widget.findData(value)
@@ -181,7 +192,10 @@ class PropertyEditor(QWidget):
         elif spec.type == ParameterType.MATERIAL_OUTPUT:
             widget = QComboBox()
             for output in self._material_outputs:
-                if output.output_id != self._current_output_id and output.output_id not in self._cycle_targets:
+                if (
+                    output.output_id != self._current_output_id
+                    and output.output_id not in self._cycle_targets
+                ):
                     widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
             index = widget.findData(value)
             if index < 0 and value:

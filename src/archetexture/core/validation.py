@@ -8,11 +8,11 @@ from typing import Any
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.assets import AssetReference
 from archetexture.core.dependencies import iter_control_bindings
+from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.output_dependencies import (
     OUTPUT_REFERENCE_OPERATIONS,
     iter_output_references,
 )
-from archetexture.core.operations import OperationDefinitionSet, OperationType
 from archetexture.core.outputs import OUTPUT_SEMANTICS
 from archetexture.core.parameters import (
     ControlFieldBinding,
@@ -559,8 +559,7 @@ def validate_recipe(
             control_transforms = control.transforms
         nested = [control.source, *control_transforms]
         if any(
-            isinstance(item, OperationInstance)
-            and item.operation_id in OUTPUT_REFERENCE_OPERATIONS
+            isinstance(item, OperationInstance) and item.operation_id in OUTPUT_REFERENCE_OPERATIONS
             for item in nested
         ):
             issues.append(
@@ -637,7 +636,10 @@ def validate_recipe(
         for layer in output.layers if isinstance(output.layers, list) else []:
             if not isinstance(layer, LayerRecipe):
                 continue
-            for instance in [layer.source, *(layer.transforms if isinstance(layer.transforms, list) else [])]:
+            for instance in [
+                layer.source,
+                *(layer.transforms if isinstance(layer.transforms, list) else []),
+            ]:
                 if not isinstance(instance, OperationInstance):
                     continue
                 if instance.operation_id in OUTPUT_REFERENCE_OPERATIONS:
@@ -653,16 +655,27 @@ def validate_recipe(
                         output_graph[output.output_id].add(target)
                         if instance.operation_id == "generator.output_scalar":
                             target_recipe = next(
-                                (item for item in outputs if isinstance(item, MaterialOutputRecipe) and item.output_id == target),
+                                (
+                                    item
+                                    for item in outputs
+                                    if isinstance(item, MaterialOutputRecipe)
+                                    and item.output_id == target
+                                ),
                                 None,
                             )
-                            mode = instance.parameters.get("mode", "Direct") if isinstance(instance.parameters, dict) else "Direct"
+                            mode = (
+                                instance.parameters.get("mode", "Direct")
+                                if isinstance(instance.parameters, dict)
+                                else "Direct"
+                            )
                             if target_recipe is not None:
                                 if mode == "Direct" and target_recipe.value_type != "scalar":
+                                    target_type = target_recipe.value_type.title()
                                     issues.append(
                                         ValidationIssue(
                                             f"outputs.{output.output_id}.{layer.name}",
-                                            f"Direct mode requires a scalar target; {target_recipe.name} is {target_recipe.value_type.title()}.",
+                                            "Direct mode requires a scalar target; "
+                                            f"is {target_type}.",
                                         )
                                     )
                                 elif mode != "Direct" and target_recipe.value_type == "scalar":
@@ -677,8 +690,12 @@ def validate_recipe(
 
     def visit_output(output_id: str) -> None:
         if output_id in visiting_outputs:
-            cycle = visiting_outputs[visiting_outputs.index(output_id):] + [output_id]
-            labels = {item.output_id: item.name for item in outputs if isinstance(item, MaterialOutputRecipe)}
+            cycle = visiting_outputs[visiting_outputs.index(output_id) :] + [output_id]
+            labels = {
+                item.output_id: item.name
+                for item in outputs
+                if isinstance(item, MaterialOutputRecipe)
+            }
             issues.append(
                 ValidationIssue(
                     "outputs",

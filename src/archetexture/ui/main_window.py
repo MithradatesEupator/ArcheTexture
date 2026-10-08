@@ -594,7 +594,10 @@ class MainWindow(QMainWindow):
             selected = next(
                 item for item in recipe.outputs if item.output_id == self._selected_output_id
             )
-            recipe.outputs = [selected, *(item for item in recipe.outputs if item.output_id != selected.output_id)]
+            recipe.outputs = [
+                selected,
+                *(item for item in recipe.outputs if item.output_id != selected.output_id),
+            ]
             self.export_coordinator.request(
                 recipe,
                 destination,
@@ -824,7 +827,8 @@ class MainWindow(QMainWindow):
                 if target is None or target_is_scalar != needs_scalar:
                     compatible = next(
                         (
-                            item for item in recipe.outputs
+                            item
+                            for item in recipe.outputs
                             if item.output_id != self._selected_output_id
                             and (item.value_type == "scalar") == needs_scalar
                         ),
@@ -985,7 +989,9 @@ class MainWindow(QMainWindow):
         candidate = copy.deepcopy(recipe)
         candidate_source = candidate.output(source_output.output_id)
         candidate_target = candidate.output(target.output_id)
-        candidate_layer = next(item for item in candidate_source.layers if item.layer_id == layer.layer_id)
+        candidate_layer = next(
+            item for item in candidate_source.layers if item.layer_id == layer.layer_id
+        )
         candidate_source.layers.remove(candidate_layer)
         candidate_target.layers.append(candidate_layer)
         try:

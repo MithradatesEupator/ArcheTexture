@@ -59,7 +59,9 @@ class RenderCoordinator:
             if self._closed:
                 raise RuntimeError("Render coordinator is closed")
             self.request_counter += 1
-            request = RenderRequest(self.request_counter, snapshot, width, height, render_context, output_id)
+            request = RenderRequest(
+                self.request_counter, snapshot, width, height, render_context, output_id
+            )
             self._latest_request_id = request.request_id
             if callback is not None:
                 self._callbacks[request.request_id] = callback
