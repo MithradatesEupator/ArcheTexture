@@ -17,6 +17,14 @@
   dependency graph and cannot reference material outputs yet.
 - Normal outputs still use regular image blending; vector-correct normal
   blending remains deferred.
+- Added an unreleased 3D material-preview workspace with procedural preview
+  meshes, camera controls, semantic output bindings, asynchronous snapshots,
+  Cook–Torrance shading, material inspection modes, lighting presets, and
+  preview-only user preferences. The preview uses Qt desktop OpenGL and keeps
+  the 2D workspace available when a compatible context cannot be created.
+- The 3D preview is an inspection aid. Parallax height, professional color
+  management, and renderer-perfect physical accuracy remain deferred; the
+  published 0.1.0 binary is unchanged.
 - The published 0.1.0 binary and its release description remain unchanged.
 
 ## 0.1.0 — Initial public alpha

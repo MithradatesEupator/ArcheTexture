@@ -4,10 +4,11 @@ import copy
 import re
 import sys
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QActionGroup, QKeySequence, QPalette
+from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QStyleFactory,
     QTabWidget,
@@ -50,6 +52,9 @@ from archetexture.core.seamlessness import recipe_seamlessness
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.export.image_export import ImageExporter
+from archetexture.preview.bindings import PreviewMaterialBinding
+from archetexture.preview.gl_viewport import MaterialGLViewport
+from archetexture.preview.snapshot import PreviewSnapshotBuilder
 from archetexture.render.coordinator import RenderCoordinator, RenderOutcome
 from archetexture.render.engine import RenderEngine
 from archetexture.render.session import RenderSession
@@ -60,6 +65,7 @@ from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.pipeline_panel import PipelinePanel
+from archetexture.ui.preview_controls import PreviewControls
 from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
 from archetexture.ui.property_editor import PropertyEditor
 from archetexture.ui.theme import palette_for_mode, theme_stylesheet
@@ -73,6 +79,10 @@ class _RenderBridge(QObject):
 class _ExportBridge(QObject):
     completed = Signal(object)
     progress = Signal(str)
+
+
+class _PreviewBridge(QObject):
+    completed = Signal(object)
 
 
 class MainWindow(QMainWindow):
@@ -89,8 +99,14 @@ class MainWindow(QMainWindow):
         self._export_status_text: str | None = None
         self._latest_render_result = None
         self._latest_displayed_request_id: int | None = None
+        self.preview_binding = PreviewMaterialBinding()
+        self._preview_request_id = 0
+        self._preview_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="archetexture-preview"
+        )
         self.render_session = RenderSession()
         render_engine = RenderEngine(session=self.render_session)
+        self.preview_builder = PreviewSnapshotBuilder(render_engine)
         self._export_bridge = _ExportBridge(self)
         self.export_coordinator = ExportCoordinator(
             exporter=ImageExporter(engine=render_engine),
@@ -109,12 +125,18 @@ class MainWindow(QMainWindow):
             self._on_render_complete,
             Qt.ConnectionType.QueuedConnection,
         )
+        self._preview_bridge = _PreviewBridge(self)
+        self._preview_bridge.completed.connect(
+            self._on_preview_complete, Qt.ConnectionType.QueuedConnection
+        )
 
         self.setWindowTitle("ArcheTexture")
         self.resize(1360, 850)
         self.pipeline_panel = PipelinePanel(self)
         self.layers_panel = LayersPanel(self)
         self.viewport = TextureViewport(self)
+        self.preview_viewport = MaterialGLViewport(self)
+        self.preview_controls = PreviewControls(self)
         self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
         self.control_fields_editor = ControlFieldsEditor(self)
@@ -167,6 +189,12 @@ class MainWindow(QMainWindow):
         center_layout.setSpacing(4)
         view_row = QHBoxLayout()
         view_row.setContentsMargins(8, 2, 8, 0)
+        view_row.addWidget(QLabel("Workspace:"))
+        self.workspace_mode_combo = QComboBox(center_panel)
+        self.workspace_mode_combo.setObjectName("workspace-mode-selector")
+        self.workspace_mode_combo.addItem("2D Texture", "2D Texture")
+        self.workspace_mode_combo.addItem("3D Material", "3D Material")
+        view_row.addWidget(self.workspace_mode_combo)
         view_row.addWidget(QLabel("View:"))
         view_row.addWidget(QLabel("Output:"))
         self.output_selector = QComboBox(center_panel)
@@ -201,7 +229,16 @@ class MainWindow(QMainWindow):
         view_row.addWidget(self.seamlessness_label)
         view_row.addStretch(1)
         center_layout.addLayout(view_row)
-        center_layout.addWidget(self.viewport, 1)
+        from PySide6.QtWidgets import QStackedWidget
+
+        self.workspace_stack = QStackedWidget(center_panel)
+        self.workspace_stack.addWidget(self.viewport)
+        self.workspace_stack.addWidget(self.preview_viewport)
+        self.preview_unavailable_label = QLabel("Initializing 3D material preview…", center_panel)
+        self.preview_unavailable_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_unavailable_label.setObjectName("preview-unavailable-message")
+        self.workspace_stack.addWidget(self.preview_unavailable_label)
+        center_layout.addWidget(self.workspace_stack, 1)
         center_layout.addWidget(self.color_ramp_editor, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -215,6 +252,10 @@ class MainWindow(QMainWindow):
         self.right_tabs = QTabWidget(self)
         self.right_tabs.addTab(self.property_editor, "Properties")
         self.right_tabs.addTab(self.control_fields_editor, "Control Fields")
+        self.preview_controls_scroll = QScrollArea(self)
+        self.preview_controls_scroll.setWidgetResizable(True)
+        self.preview_controls_scroll.setWidget(self.preview_controls)
+        self.right_tabs.addTab(self.preview_controls_scroll, "Preview")
         self.right_tabs.setObjectName("right-side-tabs")
         splitter.addWidget(self.right_tabs)
         splitter.setStretchFactor(0, 0)
@@ -222,6 +263,16 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(2, 0)
         splitter.setSizes([250, 820, 300])
         self.setCentralWidget(splitter)
+        self.workspace_mode_combo.currentIndexChanged.connect(self._workspace_mode_changed)
+        self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
+        self._restore_preview_settings()
+        self.preview_controls.settingChanged.connect(self._preview_control_changed)
+        self.preview_controls.backgroundColorChanged.connect(self._preview_background_color_changed)
+        self.preview_controls.saveRequested.connect(self._save_preview_image)
+        self.preview_controls.copyRequested.connect(self._copy_preview_image)
+        self.preview_controls.resetRequested.connect(self._reset_preview)
+        self.preview_viewport.initializationChanged.connect(self._preview_gl_initialized)
+        self.preview_viewport.viewChanged.connect(self._preview_camera_changed)
 
         self._create_actions()
         self._selected_instance_id = self._layer().source.instance_id
@@ -242,6 +293,7 @@ class MainWindow(QMainWindow):
         self.save_as_action = file_menu.addAction("Save &As…")
         self.export_action = file_menu.addAction("Export PNG…")
         self.export_texture_set_action = file_menu.addAction("Export Texture Set…")
+        self.save_preview_action = file_menu.addAction("Save Preview Image…")
         self.import_image_action = file_menu.addAction("Import Image as Layer…")
         self.export_action.setShortcut("Ctrl+Shift+E")
         file_menu.addSeparator()
@@ -283,6 +335,7 @@ class MainWindow(QMainWindow):
         self.save_as_action.triggered.connect(lambda: self.save_project(save_as=True))
         self.export_action.triggered.connect(self.export_png)
         self.export_texture_set_action.triggered.connect(self.export_texture_set)
+        self.save_preview_action.triggered.connect(lambda: self.preview_controls._save())
         self.import_image_action.triggered.connect(self._import_image_as_layer)
         self.exit_action.triggered.connect(self.close)
         self.undo_action.triggered.connect(self.undo)
@@ -358,6 +411,282 @@ class MainWindow(QMainWindow):
         settings = self._theme_settings()
         settings.setValue("viewport/mode", mode)
         settings.sync()
+
+    def _workspace_mode_changed(self, index: int) -> None:
+        is_3d = self.workspace_mode_combo.itemData(index) == "3D Material"
+        if not is_3d:
+            self._preview_request_id += 1
+        self.workspace_stack.setCurrentIndex(
+            (2 if self.preview_viewport._gl_error else 1) if is_3d else 0
+        )
+        if is_3d:
+            self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
+            self.right_tabs.setCurrentWidget(self.preview_controls_scroll)
+            self._apply_preview_settings()
+            self.preview_viewport.set_mesh(
+                self.preview_controls.mesh.currentText(),
+                self.preview_controls.quality.currentText(),
+            )
+            self._request_preview()
+        settings = self._theme_settings()
+        settings.setValue("preview/workspace", "3D Material" if is_3d else "2D Texture")
+        settings.sync()
+
+    def _preview_gl_initialized(self, available: bool, message: str) -> None:
+        if available:
+            self.preview_unavailable_label.setText("")
+            if self.workspace_mode_combo.currentData() == "3D Material":
+                self.workspace_stack.setCurrentWidget(self.preview_viewport)
+                self._request_preview()
+        else:
+            self.preview_unavailable_label.setText(
+                message or self.preview_viewport.unavailable_message
+            )
+            if self.workspace_mode_combo.currentData() == "3D Material":
+                self.workspace_stack.setCurrentWidget(self.preview_unavailable_label)
+
+    def _preview_camera_changed(self) -> None:
+        if self.preview_controls.view.currentText() != "Orbit":
+            self.preview_controls.view.blockSignals(True)
+            self.preview_controls.view.setCurrentText("Orbit")
+            self.preview_controls.view.blockSignals(False)
+
+    def _preview_background_color_changed(self, color: str) -> None:
+        self.preview_controls.custom_background = QColor(color)
+        self._apply_preview_settings()
+
+    def _apply_preview_settings(self) -> None:
+        state = self.preview_controls.view_state()
+        view = self.preview_viewport
+        view.inspection = state["inspection"]
+        view.mesh_type, view.quality = state["mesh"], state["quality"]
+        view.lighting, view.background, view.exposure = (
+            state["lighting"],
+            state["background"],
+            state["exposure"],
+        )
+        view.custom_background = QColor(state["custom_background"])
+        view.rig_rotation = state["rig_rotation"]
+        view.key_intensity = state["key_intensity"]
+        view.fill_intensity = state["fill_intensity"]
+        view.rim_intensity = state["rim_intensity"]
+        view.ambient_intensity = state["ambient_intensity"]
+        view.normal_strength, view.directx_normal = state["normal_strength"], state["directx"]
+        view.tile_u, view.tile_v, view.rotation_uv = (
+            state["tile_u"],
+            state["tile_v"],
+            state["rotation"],
+        )
+        view.alpha_mode, view.clip_threshold = state["alpha"], state["clip"]
+        view.wire_overlay, view.backface_culling = state["wire"], state["cull"]
+        view.camera.projection, view.camera.fov = state["projection"], state["fov"]
+        view.camera.auto_rotate, view.camera.auto_rotate_speed = (
+            state["auto_rotate"],
+            state["auto_speed"],
+        )
+        if state["view"] not in {"Orbit", "Reset / Frame"}:
+            view.camera.set_view(state["view"])
+        elif state["view"] == "Reset / Frame":
+            view.camera.reset()
+        settings = self._theme_settings()
+        for key, value in state.items():
+            settings.setValue(f"preview/{key}", value)
+        settings.sync()
+        view.update()
+
+    def _restore_preview_settings(self) -> None:
+        settings = self._theme_settings()
+        saved_bindings = settings.value("preview/bindings", {})
+        if isinstance(saved_bindings, dict):
+            self.preview_binding.overrides = {
+                str(key): str(value)
+                for key, value in saved_bindings.items()
+                if value not in {None, ""}
+            }
+        self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
+        state = self.preview_controls.view_state()
+        for key in state:
+            saved = settings.value(f"preview/{key}", None)
+            if saved is None:
+                continue
+            widget = {
+                "mesh": self.preview_controls.mesh,
+                "quality": self.preview_controls.quality,
+                "inspection": self.preview_controls.mode,
+                "projection": self.preview_controls.projection,
+                "lighting": self.preview_controls.lighting,
+                "background": self.preview_controls.background,
+                "alpha": self.preview_controls.alpha,
+            }.get(key)
+            if widget is not None:
+                widget.setCurrentText(str(saved))
+            elif key in {"resolution", "tile_u", "tile_v"}:
+                combo = {
+                    "resolution": self.preview_controls.resolution,
+                    "tile_u": self.preview_controls.tile_u,
+                    "tile_v": self.preview_controls.tile_v,
+                }[key]
+                index = combo.findData(int(saved) if key == "resolution" else float(saved))
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+            elif key == "rotation":
+                self.preview_controls.rotation.setCurrentIndex((0, 90, 180, 270).index(int(saved)))
+            elif key in {"fov", "exposure", "normal_strength", "clip", "auto_speed"}:
+                spin = {
+                    "fov": self.preview_controls.fov,
+                    "exposure": self.preview_controls.exposure,
+                    "normal_strength": self.preview_controls.normal_strength,
+                    "clip": self.preview_controls.clip,
+                    "auto_speed": self.preview_controls.auto_speed,
+                }[key]
+                spin.setValue(float(saved))
+            elif key in {
+                "rig_rotation",
+                "key_intensity",
+                "fill_intensity",
+                "rim_intensity",
+                "ambient_intensity",
+            }:
+                spin = {
+                    "rig_rotation": self.preview_controls.rig_rotation,
+                    "key_intensity": self.preview_controls.key_intensity,
+                    "fill_intensity": self.preview_controls.fill_intensity,
+                    "rim_intensity": self.preview_controls.rim_intensity,
+                    "ambient_intensity": self.preview_controls.ambient_intensity,
+                }[key]
+                spin.setValue(float(saved))
+            elif key == "custom_background":
+                self.preview_controls.custom_background = QColor(str(saved))
+            elif key in {"directx", "wire", "cull", "auto_rotate"}:
+                if key == "directx":
+                    self.preview_controls.normal_convention.setCurrentText(
+                        "DirectX" if str(saved).lower() == "true" else "OpenGL"
+                    )
+                else:
+                    {
+                        "wire": self.preview_controls.wire,
+                        "cull": self.preview_controls.cull,
+                        "auto_rotate": self.preview_controls.auto_rotate,
+                    }[key].setChecked(str(saved).lower() == "true")
+        workspace = settings.value("preview/workspace", "2D Texture")
+        index = self.workspace_mode_combo.findData(workspace)
+        if index >= 0:
+            self.workspace_mode_combo.setCurrentIndex(index)
+
+    def _preview_control_changed(self, kind: str) -> None:
+        if kind.startswith("binding:"):
+            self.preview_binding.overrides = self.preview_controls.binding_overrides()
+            settings = self._theme_settings()
+            settings.setValue("preview/bindings", self.preview_binding.overrides)
+            settings.sync()
+            self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
+            self._request_preview()
+        elif kind == "inspection":
+            self._apply_preview_settings()
+            self._request_preview()
+        else:
+            self._apply_preview_settings()
+            if kind == "mesh":
+                self.preview_viewport.set_mesh(
+                    self.preview_controls.mesh.currentText(),
+                    self.preview_controls.quality.currentText(),
+                )
+        if kind in {"mesh", "view"}:
+            self.statusBar().showMessage("Preview updated", 1200)
+
+    def _request_preview(self) -> None:
+        if (
+            self._closing
+            or self.workspace_mode_combo.currentData() != "3D Material"
+            or not self.preview_viewport.available
+        ):
+            return
+        state = self.preview_controls.view_state()
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        recipe = copy.deepcopy(self.document.recipe)
+        if state["resolution"]:
+            width = height = state["resolution"]
+        else:
+            width, height = recipe.width, recipe.height
+        binding = copy.deepcopy(self.preview_binding)
+        inspection = state["inspection"]
+        project_path = self.document.project_path
+
+        def render_snapshot():
+            try:
+                result = self.preview_builder.build(
+                    recipe,
+                    binding,
+                    request_id,
+                    width,
+                    height,
+                    inspection=inspection,
+                    render_context=RenderContext(project_path),
+                )
+                return request_id, result, None
+            except Exception as exc:
+                return request_id, None, exc
+
+        future = self._preview_executor.submit(render_snapshot)
+        future.add_done_callback(
+            lambda completed: (
+                self._preview_bridge.completed.emit(completed.result())
+                if not completed.cancelled() and not self._closing
+                else None
+            )
+        )
+        self.statusBar().showMessage("Updating 3D material preview…")
+
+    def _on_preview_complete(self, outcome) -> None:
+        request_id, snapshot, error = outcome
+        if self._closing or request_id != self._preview_request_id:
+            return
+        if error is not None:
+            self.preview_unavailable_label.setText(f"Preview render failed: {error}")
+            self.statusBar().showMessage(f"Preview render failed: {error}", 5000)
+            return
+        self.preview_viewport.set_snapshot(snapshot)
+        self.statusBar().showMessage("3D preview ready", 2000)
+
+    def _save_preview_image(self, path: str) -> None:
+        if not self.preview_viewport.save_preview_image(path):
+            QMessageBox.warning(
+                self, "Preview unavailable", "The OpenGL preview could not be captured."
+            )
+
+    def _copy_preview_image(self) -> None:
+        if not self.preview_viewport.copy_preview_image():
+            QMessageBox.warning(
+                self, "Preview unavailable", "The OpenGL preview could not be copied."
+            )
+
+    def _reset_preview(self) -> None:
+        self.preview_viewport.reset_preview()
+        self.preview_controls.mesh.setCurrentText("UV Sphere")
+        self.preview_controls.quality.setCurrentText("Medium")
+        self.preview_controls.mode.setCurrentText("Material")
+        self.preview_controls.lighting.setCurrentText("Neutral Studio")
+        self.preview_controls.background.setCurrentText("Dark Neutral")
+        self.preview_controls.custom_background = QColor("#35363a")
+        self.preview_controls.projection.setCurrentText("Perspective")
+        self.preview_controls.exposure.setValue(1)
+        self.preview_controls.tile_u.setCurrentIndex(self.preview_controls.tile_u.findData(1.0))
+        self.preview_controls.tile_v.setCurrentIndex(self.preview_controls.tile_v.findData(1.0))
+        self.preview_controls.rotation.setCurrentIndex(0)
+        self.preview_controls.normal_strength.setValue(1.0)
+        self.preview_controls.rig_rotation.setValue(0)
+        self.preview_controls.key_intensity.setValue(2.5)
+        self.preview_controls.fill_intensity.setValue(0.6)
+        self.preview_controls.rim_intensity.setValue(1.0)
+        self.preview_controls.ambient_intensity.setValue(1.0)
+        self.preview_controls.normal_convention.setCurrentIndex(0)
+        self.preview_controls.alpha.setCurrentText("Opaque")
+        self.preview_controls.clip.setValue(0.5)
+        self.preview_controls.wire.setChecked(False)
+        self.preview_controls.cull.setChecked(False)
+        self.preview_controls.auto_rotate.setChecked(False)
+        self._apply_preview_settings()
 
     def _layer(self, recipe: ProjectRecipe | None = None) -> LayerRecipe:
         recipe = recipe or self.document.recipe
@@ -453,6 +782,7 @@ class MainWindow(QMainWindow):
         self.property_editor.set_material_outputs(recipe, output.output_id)
         self.property_editor.set_project_path(self.document.project_path)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
+        self.preview_controls.set_recipe(recipe, self.preview_binding)
         self.control_fields_editor.property_editor.set_project_path(self.document.project_path)
         self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
@@ -468,6 +798,7 @@ class MainWindow(QMainWindow):
         self._update_title_and_actions()
         if request_render:
             self._request_render()
+            self._request_preview()
 
     @staticmethod
     def _contains_instance(recipe: ProjectRecipe, instance_id: str) -> bool:
@@ -1632,6 +1963,9 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._closing = True
+        self._preview_request_id += 1
+        self._preview_executor.shutdown(wait=False, cancel_futures=True)
+        self.preview_viewport.cleanup_gl()
         self.render_coordinator.close(wait=False)
         self.export_coordinator.close(wait=True)
         event.accept()

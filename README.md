@@ -40,6 +40,19 @@ be exported as 8-bit or 16-bit grayscale PNG; color and normal maps use 8-bit
 RGBA PNG. Semantic labels describe the data channel and do not claim
 renderer-specific physical fidelity.
 
+The unreleased workspace also has an interactive 3D material preview. It
+offers UV sphere, cube, plane, cylinder, torus, and rounded-cube meshes, three
+mesh qualities, orbit/pan/zoom camera controls, perspective and orthographic
+projection, UV tiling and rotation, and a compact metallic/roughness PBR
+display. Output bindings use stable material output IDs and can be overridden
+in the Preview tab without changing the material graph. Preview snapshots are
+rendered asynchronously through the multi-output renderer; view-only changes
+do not request new material maps. Preview preferences are stored in user
+settings and do not dirty a project. The preview requests desktop OpenGL 3.3
+Core; systems without a compatible context retain the full 2D workflow and
+show an in-app unavailable message. The renderer is an inspection aid, not a
+renderer-accurate or color-managed PBR reference.
+
 - Build a procedural layer stack with opacity, blend modes, and ordered
   transforms.
 - Use noise, patterns, cellular, image, and seamless generators.
@@ -55,8 +68,9 @@ renderer-specific physical fidelity.
 - Render asynchronously with dependency-aware caches. Choose dark, light, or
   system appearance.
 
-The interface is organized around a layer and transform workspace, a central
-texture viewport and color ramp, and Properties or Control Fields tabs.
+The interface is organized around a layer and transform workspace, switchable
+2D Texture and 3D Material central modes, a color ramp, and Properties, Control
+Fields, or Preview tabs.
 
 ## Running ArcheTexture
 
@@ -113,13 +127,14 @@ project files.
 
 ## Development status and limitations
 
-The published version 0.1.0 is an early development alpha. Some generators and operations
-are not seamless, and the seam status is advisory. Normal-map layers use the
+The published version 0.1.0 is an early development alpha and does not contain
+the unreleased multi-output or 3D preview work. Some generators and operations
+are not seamless, and the seam status is advisory. Normal-map layers use
 regular image blend modes, which do not perform physically correct vector
-blending. The developing material workflow has no live output-to-output
-dependencies, HDR/EXR, professional color management, or 3D material preview.
-ArcheTexture does not include a node editor, GPU acceleration, or a
-general-purpose installer.
+blending. The 3D preview uses a compact desktop OpenGL shader; parallax height,
+HDR/EXR, professional color management, and renderer-perfect matching are not
+provided. ArcheTexture does not include a node editor, GPU procedural
+generation, or a general-purpose installer.
 
 ## License
 
