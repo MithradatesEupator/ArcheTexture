@@ -81,6 +81,7 @@ class PropertyEditor(QWidget):
             value = instance.parameters.get(spec.identifier, spec.default)
             widget = self._make_widget(spec, value)
             if spec.type == ParameterType.MATERIAL_OUTPUT and isinstance(widget, QComboBox):
+                blocked = widget.blockSignals(True)
                 widget.clear()
                 for output in self._material_outputs:
                     if (
@@ -102,10 +103,11 @@ class PropertyEditor(QWidget):
                         continue
                     widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
                 index = widget.findData(value)
-                if index < 0 and value:
-                    widget.addItem("Missing output", value)
+                if index < 0:
+                    widget.addItem("Missing output" if value else "Select an output", value)
                     index = widget.count() - 1
                 widget.setCurrentIndex(index)
+                widget.blockSignals(blocked)
             self._form.addRow(spec.name, widget)
         if definition.operation_type == OperationType.TRANSFORM:
             influence_spec = ParameterSpec(

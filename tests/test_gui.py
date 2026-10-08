@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from archetexture import __version__
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.material_starters import MATERIAL_STARTERS, create_material_starter
 from archetexture.core.operations import OperationDefinition, OperationType, Seamlessness
 from archetexture.core.parameters import ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance, ProjectRecipe
@@ -68,6 +69,33 @@ def test_workbench_shows_pipeline_properties_and_rendered_viewport(workbench):
     assert workbench.property_editor.findChild(QDoubleSpinBox, "parameter-value") is not None
     assert workbench.viewport.rendered_field.shape == (32, 48, 4)
     assert workbench.viewport.rendered_field.dtype == np.float32
+
+
+def test_switching_output_does_not_reenter_material_reference_editor(qtbot, monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
+    )
+    recipe = create_material_starter(MATERIAL_STARTERS[0].name, width=16, height=16)
+    window = build_main_window(recipe)
+    qtbot.addWidget(window)
+    window.show()
+    changed_during_rebuild = []
+    window.property_editor.valueChanged.connect(
+        lambda key, value: changed_during_rebuild.append((key, value))
+    )
+
+    normal_index = window.output_selector.findText("Normal · Normal")
+    assert normal_index >= 0
+    window.output_selector.setCurrentIndex(normal_index)
+
+    normal_output = window._selected_output()
+    assert normal_output.name == "Normal"
+    assert window._layer().source.operation_id == "generator.output_scalar"
+    assert changed_during_rebuild == []
+    assert window._layer().source.parameters["target"] == recipe.outputs[0].output_id
+    window.close()
 
 
 def test_about_action_shows_canonical_version_and_repository(workbench, monkeypatch):

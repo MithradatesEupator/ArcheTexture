@@ -1,3 +1,8 @@
+param(
+    [string]$AutomationScript,
+    [switch]$WaitForExit
+)
+
 $ErrorActionPreference = "Stop"
 $repoRoot = [IO.Path]::GetFullPath($PSScriptRoot)
 $sourceRoot = Join-Path $repoRoot "src"
@@ -95,22 +100,48 @@ if (-not (Test-Path -LiteralPath $bootstrap)) {
 }
 
 $arguments = '"{0}" "{1}" "{2}"' -f $bootstrap, $repoRoot, $logPath
+if ($AutomationScript) {
+    $automationPath = (Resolve-Path -LiteralPath $AutomationScript).Path
+    $toolsRoot = (Join-Path $repoRoot "tools") + [IO.Path]::DirectorySeparatorChar
+    if (-not $automationPath.StartsWith($toolsRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $automationPath -PathType Leaf)) {
+        Show-LauncherError "Automation script must be an existing file inside $toolsRoot"
+        exit 1
+    }
+    $arguments += ' "{0}"' -f $automationPath
+}
 Add-LauncherLog "Selected pythonw.exe: $pythonw"
 Add-LauncherLog "Launch command: `"$pythonw`" $arguments"
 Add-LauncherLog "Working directory: $repoRoot"
 
 try {
-    $process = Start-Process -FilePath $pythonw `
-        -ArgumentList $arguments `
-        -WorkingDirectory $repoRoot `
-        -WindowStyle Normal `
-        -PassThru
-    Start-Sleep -Milliseconds 1200
+    if ($WaitForExit) {
+        $process = Start-Process -FilePath $pythonw `
+            -ArgumentList $arguments `
+            -WorkingDirectory $repoRoot `
+            -WindowStyle Normal `
+            -PassThru `
+            -Wait
+    } else {
+        $process = Start-Process -FilePath $pythonw `
+            -ArgumentList $arguments `
+            -WorkingDirectory $repoRoot `
+            -WindowStyle Normal `
+            -PassThru
+        Start-Sleep -Milliseconds 1200
+    }
     $process.Refresh()
     if ($process.HasExited -and $process.ExitCode -ne 0) {
         $tail = (Get-Content -LiteralPath $logPath -Tail 20) -join "`n"
+        if ($WaitForExit) {
+            Add-LauncherLog "AUTOMATION PROCESS FAILURE: exit code $($process.ExitCode)"
+            exit $process.ExitCode
+        }
         Show-LauncherError "ArcheTexture exited during startup (code $($process.ExitCode)).`n$tail"
         exit 1
+    }
+    if ($WaitForExit) {
+        exit $process.ExitCode
     }
 } catch {
     Show-LauncherError "ArcheTexture could not be started with $pythonw.`n$_"
