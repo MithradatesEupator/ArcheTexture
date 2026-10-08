@@ -28,6 +28,7 @@ def _visible_archetexture_windows() -> list[tuple[int, int, str]]:
     user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
     user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
     windows: list[tuple[int, int, str]] = []
+
     def visit(hwnd, _lparam):
         if not user32.IsWindowVisible(hwnd):
             return True
@@ -124,7 +125,7 @@ def verify_repo_launcher(repo_root: str) -> None:
             raise SystemExit("The launched application did not close cleanly after WM_CLOSE.")
     finally:
         kernel32.CloseHandle(process)
-    print(f"Desktop shortcut from outside checkout: opened {title!r} in pythonw.exe and closed cleanly")
+    print(f"Shortcut smoke: {title!r} launched as pythonw.exe and closed cleanly outside checkout")
 
 
 class MemorySettings:
@@ -170,16 +171,13 @@ def main() -> int:
     dialog = MaterialStarterDialog(window)
     expected = {starter.name for starter in MATERIAL_STARTERS}
     actual = {
-        dialog.material_list.item(index).text()
-        for index in range(dialog.material_list.count())
+        dialog.material_list.item(index).text() for index in range(dialog.material_list.count())
     }
     if len(expected) != 18 or actual != expected:
         raise SystemExit(f"Material catalog mismatch: expected 18, found {len(actual)}.")
     dialog.close()
 
-    window.workspace_mode_combo.setCurrentIndex(
-        window.workspace_mode_combo.findData("3D Material")
-    )
+    window.workspace_mode_combo.setCurrentIndex(window.workspace_mode_combo.findData("3D Material"))
     deadline = time.monotonic() + 8.0
     while time.monotonic() < deadline:
         app.processEvents()
