@@ -5,15 +5,31 @@ import os
 import subprocess
 import sys
 import time
+import winreg
 
-if os.environ.get("QT_QPA_PLATFORM", "").casefold() in {"offscreen", "minimal"}:
-    raise SystemExit("Desktop acceptance requires the normal Windows Qt platform.")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from PySide6.QtWidgets import QApplication
 
-from archetexture.core.material_starters import MATERIAL_STARTERS
-from archetexture.ui.main_window import MainWindow
-from archetexture.ui.material_starter_dialog import MaterialStarterDialog
+def _registry_path(root, subkey: str) -> str:
+    try:
+        with winreg.OpenKey(root, subkey) as key:
+            value, value_type = winreg.QueryValueEx(key, "Path")
+    except OSError:
+        return ""
+    if value_type == winreg.REG_EXPAND_SZ:
+        return os.path.expandvars(value)
+    return value
+
+
+def sanitize_explorer_environment() -> None:
+    machine_path = _registry_path(
+        winreg.HKEY_LOCAL_MACHINE,
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+    )
+    user_path = _registry_path(winreg.HKEY_CURRENT_USER, "Environment")
+    os.environ["PATH"] = ";".join(part for part in (machine_path, user_path) if part)
+    for name in ("CONDA_PREFIX", "VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "QT_QPA_PLATFORM"):
+        os.environ.pop(name, None)
 
 
 def _visible_archetexture_windows() -> list[tuple[int, int, str]]:
@@ -72,6 +88,13 @@ def verify_repo_launcher(repo_root: str) -> None:
     shortcut_path = shortcut_line.removeprefix("Shortcut: ")
     if not os.path.isfile(shortcut_path):
         raise SystemExit(f"Desktop shortcut does not exist: {shortcut_path}")
+    state_dir = os.path.join(os.environ["LOCALAPPDATA"], "ArcheTexture")
+    interpreter_file = os.path.join(state_dir, "pythonw-path.txt")
+    log_path = os.path.join(state_dir, "launcher.log")
+    with open(interpreter_file, encoding="utf-8-sig") as file:
+        selected_pythonw = file.read().strip()
+    if not os.path.isfile(selected_pythonw):
+        raise SystemExit(f"Saved pythonw.exe is missing: {selected_pythonw}")
 
     baseline_pids = {pid for _hwnd, pid, _title in _visible_archetexture_windows()}
     os.startfile(shortcut_path, cwd=os.environ.get("TEMP", os.getcwd()))
@@ -87,6 +110,15 @@ def verify_repo_launcher(repo_root: str) -> None:
         time.sleep(0.1)
     if not target:
         raise SystemExit("The desktop shortcut did not open a visible main window.")
+    if not os.path.isfile(log_path):
+        raise SystemExit(f"Launcher log was not created: {log_path}")
+    with open(log_path, encoding="utf-8-sig") as file:
+        launcher_log = file.read()
+    for required in (selected_pythonw, repo_root, "Launch command:", "Source path:"):
+        if required not in launcher_log:
+            raise SystemExit(f"Launcher log is missing {required!r}.")
+    if "STARTUP FAILURE:" in launcher_log:
+        raise SystemExit(f"Launcher recorded a startup failure:\n{launcher_log}")
 
     hwnd, pid, title = target
     kernel32 = ctypes.windll.kernel32
@@ -117,15 +149,24 @@ def verify_repo_launcher(repo_root: str) -> None:
         image_size = ctypes.c_ulong(len(image))
         if not kernel32.QueryFullProcessImageNameW(process, 0, image, ctypes.byref(image_size)):
             raise SystemExit("Could not resolve the launched GUI executable.")
-        if os.path.basename(image.value).casefold() != "pythonw.exe":
-            raise SystemExit(f"Launcher used an unexpected process: {image.value}")
+        if os.path.normcase(os.path.abspath(image.value)) != os.path.normcase(
+            os.path.abspath(selected_pythonw)
+        ):
+            raise SystemExit(
+                f"Launcher used {image.value}; saved interpreter is {selected_pythonw}."
+            )
         ctypes.windll.user32.SendMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
         wait_result = kernel32.WaitForSingleObject(process, 15000)
         if wait_result != 0:
             raise SystemExit("The launched application did not close cleanly after WM_CLOSE.")
     finally:
         kernel32.CloseHandle(process)
-    print(f"Shortcut smoke: {title!r} launched as pythonw.exe and closed cleanly outside checkout")
+    with open(log_path, encoding="utf-8-sig") as file:
+        launcher_log = file.read()
+    if "Application event loop ended with exit code 0." not in launcher_log:
+        raise SystemExit("Launcher log does not confirm a clean application shutdown.")
+    print(f"Sanitized shortcut smoke: {title!r} launched as pythonw.exe and closed cleanly")
+    print(f"Launcher log: {log_path}")
 
 
 class MemorySettings:
@@ -143,8 +184,17 @@ def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("This acceptance check must run on Windows.")
 
-    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    verify_repo_launcher(repo_root)
+    sanitize_explorer_environment()
+    if os.environ.get("QT_QPA_PLATFORM", "").casefold() in {"offscreen", "minimal"}:
+        raise SystemExit("Desktop acceptance requires the normal Windows Qt platform.")
+    sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+    from PySide6.QtWidgets import QApplication
+
+    from archetexture.core.material_starters import MATERIAL_STARTERS
+    from archetexture.ui.main_window import MainWindow
+    from archetexture.ui.material_starter_dialog import MaterialStarterDialog
+
+    verify_repo_launcher(REPO_ROOT)
 
     app = QApplication(["ArcheTexture launcher acceptance"])
     app.setOrganizationName("ArcheTexture Acceptance")
@@ -199,6 +249,8 @@ def main() -> int:
     app.processEvents()
     if window.isVisible():
         raise SystemExit("Main window did not close cleanly.")
+    print("Shell environment: no CONDA_PREFIX, VIRTUAL_ENV, or PYTHONPATH")
+    print(f"Repo source: {REPO_ROOT}\\src")
     print(f"Qt platform: {app.platformName()}")
     print("2D workspace: initialized and visible")
     print(f"3D preview: {preview_result}")
