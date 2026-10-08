@@ -80,6 +80,7 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._export_status_text: str | None = None
         self._latest_render_result = None
+        self._latest_displayed_request_id: int | None = None
         self.render_session = RenderSession()
         self._export_bridge = _ExportBridge(self)
         self.export_coordinator = ExportCoordinator(on_complete=self._export_bridge.completed.emit)
@@ -444,7 +445,14 @@ class MainWindow(QMainWindow):
         self._request_render(recipe)
 
     def _on_render_complete(self, outcome: RenderOutcome) -> None:
-        if self._closing or outcome.request_id != self.render_coordinator.latest_request_id:
+        if (
+            self._closing
+            or outcome.request_id != self.render_coordinator.latest_request_id
+            or (
+                self._latest_displayed_request_id is not None
+                and outcome.request_id < self._latest_displayed_request_id
+            )
+        ):
             return
         if outcome.error is not None:
             self.viewport.set_error(str(outcome.error))
@@ -456,6 +464,7 @@ class MainWindow(QMainWindow):
             return
         self.viewport.set_result(outcome.result)
         self._latest_render_result = outcome.result
+        self._latest_displayed_request_id = outcome.request_id
         self.viewport.set_mask_preview(
             (outcome.result.mask_fields or {}).get(self._selected_layer_id)
         )
@@ -1288,6 +1297,7 @@ class MainWindow(QMainWindow):
         recipe = self.document.new_document()
         self.render_session.clear()
         self._latest_render_result = None
+        self._latest_displayed_request_id = None
         self.viewport.set_error("Rendering…")
         self._selected_layer_id = recipe.layers[0].layer_id
         self._selected_instance_id = recipe.layers[0].source.instance_id
@@ -1315,6 +1325,7 @@ class MainWindow(QMainWindow):
         recipe = self.document.replace_with_project(candidate)
         self.render_session.clear()
         self._latest_render_result = None
+        self._latest_displayed_request_id = None
         self.viewport.set_error("Rendering…")
         self._selected_layer_id = recipe.layers[0].layer_id
         self._selected_instance_id = recipe.layers[0].source.instance_id

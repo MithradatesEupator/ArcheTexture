@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,7 @@ from archetexture.core.recipe import (
 )
 from archetexture.core.registry import REGISTRY
 from archetexture.export.image_export import ImageExporter
+from archetexture.render.coordinator import RenderOutcome
 from archetexture.render.engine import RenderEngine
 from archetexture.ui.main_window import build_main_window
 
@@ -59,6 +61,22 @@ def _recipe(image_path: Path) -> ProjectRecipe:
     )
 
 
+def _wait_for_latest_displayed_render(window, qtbot):
+    coordinator = window.render_coordinator
+    expected_request_id = coordinator.latest_request_id
+
+    def is_published():
+        return (
+            coordinator.latest_request_id == expected_request_id
+            and window._latest_displayed_request_id == expected_request_id
+            and not coordinator.is_running
+            and coordinator.pending_request is None
+        )
+
+    qtbot.waitUntil(is_published, timeout=5000)
+    return expected_request_id
+
+
 def test_real_gui_edits_converge_and_document_switches_clear_previous_view(
     qtbot, monkeypatch, tmp_path
 ):
@@ -76,13 +94,7 @@ def test_real_gui_edits_converge_and_document_switches_clear_previous_view(
     window.show()
 
     def settled():
-        qtbot.waitUntil(
-            lambda: (
-                not window.render_coordinator.is_running
-                and window._latest_render_result is not None
-            ),
-            timeout=5000,
-        )
+        return _wait_for_latest_displayed_render(window, qtbot)
 
     settled()
     session = window.render_session
@@ -220,17 +232,20 @@ def test_gui_mask_modulation_undo_rename_and_export_dependency_workflow(
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
     )
     window = build_main_window(_dependency_recipe())
+    submitted_recipes = {}
+    original_request = window.render_coordinator.request
+
+    def capture_request(recipe, **kwargs):
+        request = original_request(recipe, **kwargs)
+        submitted_recipes[request.request_id] = request.recipe
+        return request
+
+    window.render_coordinator.request = capture_request
     qtbot.addWidget(window)
     window.show()
 
     def settled():
-        qtbot.waitUntil(
-            lambda: (
-                not window.render_coordinator.is_running
-                and window._latest_render_result is not None
-            ),
-            timeout=5000,
-        )
+        return _wait_for_latest_displayed_render(window, qtbot)
 
     def matches_uncached():
         fresh = RenderEngine().render_uncached(
@@ -239,6 +254,7 @@ def test_gui_mask_modulation_undo_rename_and_export_dependency_workflow(
             height=window.document.recipe.height,
             render_context=RenderContext(window.document.project_path),
         )
+        assert window._latest_displayed_request_id == window.render_coordinator.latest_request_id
         np.testing.assert_array_equal(window.viewport.rendered_field, fresh.rgba_field)
 
     def edit_control(identifier: str, value: float):
@@ -266,11 +282,13 @@ def test_gui_mask_modulation_undo_rename_and_export_dependency_workflow(
     before = session.stats
     edit_control("unrelated", 2.4)
     settled()
+    matches_uncached()
     delta = _ui_stats_delta(session.stats, before)
     assert delta["ops"] == 0 and delta["layer_hits"] == 6
     assert delta["layer_misses"] == 0
     window.undo()
     settled()
+    matches_uncached()
     window.redo()
     settled()
     matches_uncached()
@@ -299,6 +317,7 @@ def test_gui_mask_modulation_undo_rename_and_export_dependency_workflow(
     window.undo()
     settled()
     assert "mask" in window.document.recipe.control_fields
+    assert all(layer.mask.source_id == "mask" for layer in window.document.recipe.layers)
     matches_uncached()
     window.redo()
     settled()
@@ -306,14 +325,36 @@ def test_gui_mask_modulation_undo_rename_and_export_dependency_workflow(
     matches_uncached()
 
     editor.select_field("surface-mask")
+    before = session.stats
     control = window.document.recipe.control_fields["surface-mask"]
-    edit_control("surface-mask", control.source.parameters["scale"] + 0.15)
-    settled()
+    edited_value = control.source.parameters["scale"] + 0.15
+    edit_control("surface-mask", edited_value)
+    request_id = settled()
+    submitted = submitted_recipes[request_id]
+    assert submitted.control_fields["surface-mask"].source.parameters["scale"] == edited_value
+    assert all(layer.mask.source_id == "surface-mask" for layer in submitted.layers)
+    delta = _ui_stats_delta(session.stats, before)
+    assert delta["ops"] == 2
+    assert delta["layer_hits"] == 6 and delta["layer_misses"] == 0
+    assert delta["cf_misses"] == 1
     matches_uncached()
-    for value in (3.0, 3.1, 3.2, 3.3):
-        current = window.document.recipe.control_fields["surface-mask"].source
-        editor.valueChanged.emit("surface-mask", (current.instance_id, "scale"), value)
+    window.undo()
     settled()
+    assert "surface-mask" in window.document.recipe.control_fields
+    assert all(layer.mask.source_id == "surface-mask" for layer in window.document.recipe.layers)
+    assert (
+        window.document.recipe.control_fields["surface-mask"].source.parameters["scale"]
+        == control.source.parameters["scale"]
+    )
+    matches_uncached()
+    window.redo()
+    settled()
+    assert "surface-mask" in window.document.recipe.control_fields
+    assert all(layer.mask.source_id == "surface-mask" for layer in window.document.recipe.layers)
+    assert (
+        window.document.recipe.control_fields["surface-mask"].source.parameters["scale"]
+        == edited_value
+    )
     matches_uncached()
 
     project_path = tmp_path / "dependency-gui.archetexture"
@@ -343,3 +384,90 @@ def _ui_stats_delta(after: dict, before: dict) -> dict:
         "cf_hits": after["controls"]["hits"] - before["controls"]["hits"],
         "cf_misses": after["controls"]["misses"] - before["controls"]["misses"],
     }
+
+
+def test_worker_idle_does_not_count_as_latest_render_published(qtbot, monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
+    )
+    window = build_main_window(_dependency_recipe())
+    qtbot.addWidget(window)
+    window.show()
+    previous_id = _wait_for_latest_displayed_render(window, qtbot)
+    previous_pixels = window.viewport.rendered_field.copy()
+
+    held_outcomes = []
+    completed = threading.Event()
+    coordinator = window.render_coordinator
+    original_completion = coordinator.on_complete
+
+    def hold_completion(outcome):
+        held_outcomes.append(outcome)
+        completed.set()
+
+    coordinator.on_complete = hold_completion
+    control = window.document.recipe.control_fields["mask"]
+    window._control_value_changed(
+        "mask",
+        (control.source.instance_id, "scale"),
+        control.source.parameters["scale"] + 0.35,
+    )
+    latest_id = coordinator.latest_request_id
+    assert latest_id > previous_id
+    assert completed.wait(5)
+
+    # Worker-idle plus any prior result is not proof the latest UI update landed.
+    assert not coordinator.is_running
+    assert window._latest_render_result is not None
+    assert window._latest_displayed_request_id == previous_id
+    assert window._latest_displayed_request_id != latest_id
+    assert coordinator.active_request is None and coordinator.pending_request is None
+    assert held_outcomes[0].request_id == latest_id
+    assert held_outcomes[0].result is not None
+    fresh = RenderEngine().render_uncached(
+        window.document.recipe,
+        render_context=RenderContext(window.document.project_path),
+    )
+    assert not np.array_equal(previous_pixels, fresh.rgba_field)
+    np.testing.assert_array_equal(held_outcomes[0].result.rgba_field, fresh.rgba_field)
+    np.testing.assert_array_equal(window.viewport.rendered_field, previous_pixels)
+
+    coordinator.on_complete = original_completion
+    original_completion(held_outcomes[0])
+    assert _wait_for_latest_displayed_render(window, qtbot) == latest_id
+    assert window._latest_displayed_request_id == latest_id
+    np.testing.assert_array_equal(window.viewport.rendered_field, fresh.rgba_field)
+    window.close()
+
+
+def test_delayed_old_qt_completion_cannot_regress_displayed_request(qtbot):
+    window = build_main_window(_dependency_recipe())
+    qtbot.addWidget(window)
+    window.show()
+    current_id = _wait_for_latest_displayed_render(window, qtbot)
+    current_result = window._latest_render_result
+    current_pixels = window.viewport.rendered_field.copy()
+    assert current_id > 0 and current_result is not None
+
+    old_recipe = _dependency_recipe()
+    old_recipe.control_fields["mask"].source.parameters["scale"] = 9.0
+    old_result = RenderEngine().render_uncached(old_recipe)
+    old_outcome = RenderOutcome(current_id - 1, result=old_result)
+    emitted = threading.Event()
+
+    def emit_delayed_completion():
+        window._render_bridge.completed.emit(old_outcome)
+        emitted.set()
+
+    delayed_worker = threading.Thread(target=emit_delayed_completion)
+    delayed_worker.start()
+    assert emitted.wait(3)
+    delayed_worker.join(timeout=3)
+    window._application.processEvents()
+
+    assert window._latest_displayed_request_id == current_id
+    assert window._latest_render_result is current_result
+    np.testing.assert_array_equal(window.viewport.rendered_field, current_pixels)
+    window.close()
