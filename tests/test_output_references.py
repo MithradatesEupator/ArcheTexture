@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PIL import Image
 from PySide6.QtWidgets import QComboBox
 
+from archetexture.core.assets import AssetReference
 from archetexture.core.defaults import default_recipe
 from archetexture.core.material_presets import apply_material_preset
 from archetexture.core.output_dependencies import topological_output_order
@@ -47,28 +49,64 @@ def test_default_normal_is_a_live_height_reference():
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected"),
+    "mode",
     [
-        ("Red", 0.2),
-        ("Green", 0.4),
-        ("Blue", 0.6),
-        ("Alpha", 0.8),
-        ("Luminance", 0.37192),
-        ("Average RGB", 0.4),
-        ("Minimum RGB", 0.2),
-        ("Maximum RGB", 0.6),
+        "Red",
+        "Green",
+        "Blue",
+        "Alpha",
+        "Luminance",
+        "Average RGB",
+        "Minimum RGB",
+        "Maximum RGB",
     ],
 )
-def test_output_scalar_extracts_authoritative_color_channels(mode, expected):
-    # Keep extraction math focused by supplying an authoritative RGBA result.
-    from archetexture.generators.basic import output_scalar
-
-    class Result:
-        scalar_field = None
-        rgba_field = np.broadcast_to(np.array([0.2, 0.4, 0.6, 0.8], np.float32), (2, 3, 4))
-
-    field = output_scalar(None, {"target": "base", "mode": mode}, 3, 2, 0, lambda _id: Result())
-    np.testing.assert_allclose(field, expected, atol=1e-3)
+def test_output_scalar_extracts_authoritative_color_channels(mode, tmp_path):
+    image_path = tmp_path / "channels.png"
+    Image.fromarray(np.array([[[51, 102, 153, 204]]], dtype=np.uint8)).save(image_path)
+    recipe = ProjectRecipe(
+        width=3,
+        height=2,
+        outputs=[
+            _output(
+                "base",
+                "Base",
+                "color",
+                OperationInstance(
+                    "image",
+                    "generator.image",
+                    1,
+                    parameters={"asset": AssetReference(str(image_path), "absolute")},
+                ),
+            ),
+            _output(
+                "derived",
+                "Derived",
+                "scalar",
+                OperationInstance(
+                    "extract",
+                    "generator.output_scalar",
+                    1,
+                    parameters={"target": "base", "mode": mode},
+                ),
+            ),
+        ],
+    )
+    engine = RenderEngine()
+    color = engine.render_output(recipe, "base").rgba_field
+    result = engine.render_output(recipe, "derived")
+    rgb = color[..., :3]
+    expected = {
+        "Red": color[..., 0],
+        "Green": color[..., 1],
+        "Blue": color[..., 2],
+        "Alpha": color[..., 3],
+        "Luminance": rgb[..., 0] * 0.2126 + rgb[..., 1] * 0.7152 + rgb[..., 2] * 0.0722,
+        "Average RGB": np.mean(rgb, axis=-1),
+        "Minimum RGB": np.min(rgb, axis=-1),
+        "Maximum RGB": np.max(rgb, axis=-1),
+    }[mode]
+    np.testing.assert_allclose(result.scalar_field, expected, atol=1e-6)
 
 
 def test_live_reference_render_memoization_and_rename_stability(tmp_path):
@@ -320,3 +358,97 @@ def test_output_manager_derivation_and_delete_blocker(qtbot, monkeypatch):
     )
     manager._delete()
     assert selected and "Normal" in selected[0]
+
+
+@pytest.mark.parametrize(
+    ("helper", "target_label", "operation", "target_id", "mode", "transform"),
+    [
+        (
+            "Normal from Height",
+            "Height · Scalar",
+            "generator.output_scalar",
+            "height",
+            "Direct",
+            "transform.height_to_normal",
+        ),
+        (
+            "Glossiness from Roughness",
+            "Roughness · Scalar",
+            "generator.output_scalar",
+            "roughness",
+            "Direct",
+            "transform.invert",
+        ),
+        (
+            "Roughness from Glossiness",
+            "Glossiness · Scalar",
+            "generator.output_scalar",
+            "glossiness-source",
+            "Direct",
+            "transform.invert",
+        ),
+        (
+            "Opacity from Base Color Alpha",
+            "Base Color · Color",
+            "generator.output_scalar",
+            "base-color",
+            "Alpha",
+            None,
+        ),
+        (
+            "Height from Base Color Luminance",
+            "Base Color · Color",
+            "generator.output_scalar",
+            "base-color",
+            "Luminance",
+            None,
+        ),
+        (
+            "Custom Scalar from Output…",
+            "Height · Scalar",
+            "generator.output_scalar",
+            "height",
+            "Direct",
+            None,
+        ),
+        (
+            "Custom Color from Output…",
+            "Roughness · Scalar",
+            "generator.output_color",
+            "roughness",
+            None,
+            None,
+        ),
+    ],
+)
+def test_derive_output_helpers_build_ordinary_reference_pipelines(
+    qtbot, monkeypatch, helper, target_label, operation, target_id, mode, transform
+):
+    from PySide6.QtWidgets import QInputDialog
+
+    from archetexture.core.material_presets import new_material_output
+    from archetexture.ui.output_manager import OutputManagerDialog
+
+    recipe = default_recipe()
+    if helper == "Roughness from Glossiness":
+        gloss = new_material_output("glossiness", "Glossiness")
+        gloss.output_id = "glossiness-source"
+        recipe.outputs.append(gloss)
+    manager = OutputManagerDialog(recipe, "base-color")
+    qtbot.addWidget(manager)
+    dialog_choices = iter((helper, target_label))
+    monkeypatch.setattr(
+        QInputDialog,
+        "getItem",
+        lambda *_args, **_kwargs: (next(dialog_choices), True),
+    )
+    manager._derive()
+    derived = manager.recipe.output(manager.selected_output_id)
+    source = derived.layers[0].source
+    assert source.operation_id == operation
+    assert source.parameters["target"] == target_id
+    if mode is not None:
+        assert source.parameters["mode"] == mode
+    assert [item.operation_id for item in derived.layers[0].transforms] == (
+        [transform] if transform else []
+    )

@@ -28,10 +28,7 @@ from archetexture.core.material_presets import (
     duplicate_material_output,
     new_material_output,
 )
-from archetexture.core.output_dependencies import (
-    output_direct_dependencies,
-    transitive_output_dependencies,
-)
+from archetexture.core.output_dependencies import output_direct_dependencies
 from archetexture.core.outputs import OUTPUT_CATEGORIES, semantics_in_category
 from archetexture.core.recipe import LayerRecipe, OperationInstance, ProjectRecipe
 from archetexture.core.registry import REGISTRY
@@ -313,13 +310,7 @@ class OutputManagerDialog(QDialog):
             "Opacity from Base Color Alpha": "base_color",
             "Height from Base Color Luminance": "base_color",
         }
-        candidates = [
-            item
-            for item in self.recipe.outputs
-            if item.output_id != self.selected_output_id
-            and self.selected_output_id
-            not in transitive_output_dependencies(self.recipe, item.output_id)
-        ]
+        candidates = list(self.recipe.outputs)
         if desired:
             candidates = [item for item in candidates if item.value_type == desired]
         preferred = preferred_semantics.get(helper)
