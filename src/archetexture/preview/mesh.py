@@ -39,7 +39,7 @@ class PreviewMesh:
                 raise ValueError("Mesh contains degenerate triangles")
 
 
-_QUALITY = {"Low": 16, "Medium": 32, "High": 64}
+_QUALITY = {"Low": 40, "Medium": 64, "High": 96}
 MESH_TYPES = ("UV Sphere", "Cube", "Plane", "Cylinder", "Torus", "Rounded Cube")
 MESH_QUALITIES = tuple(_QUALITY)
 

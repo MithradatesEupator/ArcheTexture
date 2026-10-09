@@ -50,6 +50,35 @@ BACKGROUNDS = (
     "Checkerboard",
     "Custom Color",
 )
+_FLOAT_UNIFORMS = frozenset(
+    {
+        "roughness",
+        "metallic",
+        "exposure",
+        "tileU",
+        "tileV",
+        "rotationUV",
+        "lightIntensity",
+        "fillIntensity",
+        "rimIntensity",
+        "ambientIntensity",
+        "normalStrength",
+        "clipThreshold",
+    }
+)
+
+
+def _set_typed_uniform(program, functions, name, value) -> None:
+    location = program.uniformLocation(name.encode())
+    if location < 0:
+        return
+    if name in _FLOAT_UNIFORMS:
+        functions.glUniform1f(location, float(value))
+    elif isinstance(value, (int, np.integer, bool)):
+        functions.glUniform1i(location, int(value))
+    else:
+        program.setUniformValue(location, value)
+
 
 _VERTEX = """#version 330 core
 layout(location=0) in vec3 position;
@@ -103,7 +132,7 @@ void main(){
  vec3 f=fresnel(max(dot(h,v),0.0),mix(vec3(0.04),base.rgb,metal));
  vec3 c=(
    (1.0-f)*(1.0-metal)*base.rgb/3.14159
-   +D*G*f/max(4.0*nv*nl,0.0001)
+   +D*G*f*3.0/max(4.0*nv*nl,0.0001)
  )*nl*lightIntensity*keyColor;
  vec3 fillDirection=normalize(vec3(-l.x,0.25,-l.z));
  c+=base.rgb*(1.0-metal)*max(dot(n,fillDirection),0.0)*fillIntensity*0.25*fillColor;
@@ -146,7 +175,7 @@ class MaterialGLViewport(QOpenGLWidget):
         fmt.setSamples(4)
         self.setFormat(fmt)
         self.camera = CameraState()
-        self.mesh_type, self.quality = "UV Sphere", "Medium"
+        self.mesh_type, self.quality = "UV Sphere", "High"
         self.inspection, self.lighting, self.background = (
             "Material",
             "Neutral Studio",
@@ -440,9 +469,7 @@ class MaterialGLViewport(QOpenGLWidget):
         )
 
     def _set_uniform(self, name, value):
-        location = self._program.uniformLocation(name.encode())
-        if location >= 0:
-            self._program.setUniformValue(location, value)
+        _set_typed_uniform(self._program, self.context().functions(), name, value)
 
     def mouseMoveEvent(self, event):
         if self._last_mouse is None or event.buttons() == Qt.MouseButton.NoButton:
@@ -480,10 +507,10 @@ class MaterialGLViewport(QOpenGLWidget):
 
     def _rotated_key_direction(self):
         angle = np.radians(self.rig_rotation)
-        x, z = -0.4, 1.0
+        x, z = 0.5, 1.0
         return QVector3D(
             float(x * np.cos(angle) - z * np.sin(angle)),
-            0.7,
+            0.35,
             float(x * np.sin(angle) + z * np.cos(angle)),
         ).normalized()
 
@@ -515,7 +542,7 @@ class MaterialGLViewport(QOpenGLWidget):
 
     def reset_preview(self):
         self.camera.reset()
-        self.mesh_type, self.quality, self.inspection = "UV Sphere", "Medium", "Material"
+        self.mesh_type, self.quality, self.inspection = "UV Sphere", "High", "Material"
         self.lighting, self.background, self.exposure = "Neutral Studio", "Dark Neutral", 1.0
         self.normal_strength, self.directx_normal = 1.0, False
         self.tile_u = self.tile_v = 1.0

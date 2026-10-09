@@ -139,3 +139,32 @@ def test_layer_removal_is_undoable(qtbot):
     window.redo()
     assert len(window.document.recipe.layers) == 1
     window.close()
+
+
+def test_layer_identity_context_and_parameters_stay_visible(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    layer_id = window._selected_layer_id
+    layer = window._layer()
+    item = window.layers_panel.layer_list.currentItem()
+    assert window.layers_panel.layer_list.EditTrigger.DoubleClicked
+    assert window.layers_panel.layer_list.EditTrigger.EditKeyPressed
+    assert window.layers_panel.pipeline_descriptor.text() == window._layer_descriptor(layer)
+    assert layer.name in window.color_ramp_editor.title_label.text()
+    assert window.property_editor.isVisible() or not window.property_editor.isHidden()
+    assert layer.name in window.context_breadcrumb.text()
+
+    window._rename_layer(layer_id, "Stone Breakup")
+    assert window._layer().name == "Stone Breakup"
+    assert window._layer().name in window.color_ramp_editor.title_label.text()
+    assert "Stone Breakup" in window.context_breadcrumb.text()
+
+    original_name = window._layer().name
+    window._source_changed("generator.cellular")
+    assert window._layer().name == original_name
+    assert window.layers_panel.pipeline_descriptor.text().startswith("Cellular")
+    assert item is not None
+    window._add_layer()
+    assert window._layer().name.startswith("Constant")
+    window.close()

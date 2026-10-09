@@ -11,3 +11,5 @@ dist/
 *.egg-info/
 *.log
 .tmp-atx19/
+.tmp-atx26-*
+.tmp-atx26-evidence/

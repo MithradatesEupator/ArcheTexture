@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -51,9 +52,20 @@ class LayersPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(QLabel("LAYERS"))
         self.layer_list = QListWidget()
+        self.layer_list.setObjectName("layer-list")
+        self.layer_list.setEditTriggers(
+            self.layer_list.EditTrigger.DoubleClicked | self.layer_list.EditTrigger.EditKeyPressed
+        )
         self.layer_list.currentItemChanged.connect(self._selected)
         self.layer_list.itemChanged.connect(self._changed)
         layout.addWidget(self.layer_list, 1)
+        self.pipeline_descriptor = QLabel("Select a layer to inspect its pipeline.", self)
+        self.pipeline_descriptor.setObjectName("layer-pipeline-descriptor")
+        self.pipeline_descriptor.setWordWrap(True)
+        self.pipeline_descriptor.setToolTip(
+            "Derived from the selected layer's source and transforms."
+        )
+        layout.addWidget(self.pipeline_descriptor)
         row = QHBoxLayout()
         for label, slot in (("Add", self.addRequested.emit),):
             button = QPushButton(label)
@@ -72,13 +84,13 @@ class LayersPanel(QWidget):
         order.addWidget(self.up_button)
         order.addWidget(self.down_button)
         layout.addLayout(order)
-        transfer = QHBoxLayout()
-        self.copy_output_button = QPushButton("Copy to Output…")
-        self.move_output_button = QPushButton("Move to Output…")
-        self.create_output_button = QPushButton("New Output from Layer")
-        for button in (self.copy_output_button, self.move_output_button, self.create_output_button):
-            transfer.addWidget(button)
-        layout.addLayout(transfer)
+        self.more_layer_actions = QPushButton("Layer actions ▾")
+        transfer_menu = QMenu(self.more_layer_actions)
+        self.copy_output_button = transfer_menu.addAction("Copy to Output…")
+        self.move_output_button = transfer_menu.addAction("Move to Output…")
+        self.create_output_button = transfer_menu.addAction("New Output from Layer")
+        self.more_layer_actions.setMenu(transfer_menu)
+        layout.addWidget(self.more_layer_actions)
         self.opacity = _OpacitySpinBox()
         self.opacity.setRange(0.0, 1.0)
         self.opacity.setDecimals(2)
@@ -95,9 +107,9 @@ class LayersPanel(QWidget):
         self.remove_button.clicked.connect(self._remove)
         self.up_button.clicked.connect(lambda: self._move(-1))
         self.down_button.clicked.connect(lambda: self._move(1))
-        self.copy_output_button.clicked.connect(self._copy_to_output)
-        self.move_output_button.clicked.connect(self._move_to_output)
-        self.create_output_button.clicked.connect(self._create_output)
+        self.copy_output_button.triggered.connect(self._copy_to_output)
+        self.move_output_button.triggered.connect(self._move_to_output)
+        self.create_output_button.triggered.connect(self._create_output)
         self.opacity.valueChanged.connect(self._opacity_changed)
         self.blend.currentIndexChanged.connect(self._blend_changed)
         self.mask_combo = QComboBox(self)
@@ -183,6 +195,10 @@ class LayersPanel(QWidget):
         self.copy_output_button.setEnabled(row >= 0)
         self.move_output_button.setEnabled(row >= 0)
         self.create_output_button.setEnabled(row >= 0)
+
+    def set_pipeline_descriptor(self, descriptor: str) -> None:
+        self.pipeline_descriptor.setText(descriptor)
+        self.pipeline_descriptor.setToolTip(descriptor)
 
     def _selected_id(self) -> str | None:
         item = self.layer_list.currentItem()

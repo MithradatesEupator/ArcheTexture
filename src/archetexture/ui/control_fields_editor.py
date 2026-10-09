@@ -43,9 +43,11 @@ class ControlFieldsEditor(QWidget):
         self._selected_id: str | None = None
         self._selected_operation_id: str | None = None
         self._syncing = False
+        self._affected_by: dict[str, list[str]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addWidget(QLabel("Reusable scalar recipes can modulate numeric parameters."))
+        layout.addWidget(QLabel("Fields"))
 
         self.fields_list = QListWidget(self)
         self.fields_list.setObjectName("control-fields-list")
@@ -71,6 +73,11 @@ class ControlFieldsEditor(QWidget):
         self.details = QWidget(self)
         detail_layout = QVBoxLayout(self.details)
         detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.impact_label = QLabel("A selected field's affected layers and parameters appear here.")
+        self.impact_label.setObjectName("control-field-impact")
+        self.impact_label.setWordWrap(True)
+        detail_layout.addWidget(self.impact_label)
+        detail_layout.addWidget(QLabel("Source"))
         self.source_combo = QComboBox(self.details)
         self.source_combo.setObjectName("control-source")
         self._generators = self._compatible_generators()
@@ -93,6 +100,7 @@ class ControlFieldsEditor(QWidget):
         self.transform_list.setObjectName("control-transform-list")
         self.transform_list.currentItemChanged.connect(self._transform_selected)
         self.transform_list.itemChanged.connect(self._transform_toggled)
+        detail_layout.addWidget(QLabel("Transform chain"))
         detail_layout.addWidget(self.transform_list, 1)
         chain_add = QHBoxLayout()
         self.transform_combo = QComboBox(self.details)
@@ -142,6 +150,7 @@ class ControlFieldsEditor(QWidget):
         self.mapping_quantize.setDecimals(1)
         self.mapping_quantize.setToolTip("0 disables quantization")
         mapping_form = QFormLayout()
+        detail_layout.addWidget(QLabel("Mapping"))
         mapping_form.addRow(self.mapping_enabled)
         mapping_form.addRow("Output minimum", self.mapping_min)
         mapping_form.addRow("Output maximum", self.mapping_max)
@@ -153,6 +162,7 @@ class ControlFieldsEditor(QWidget):
         self.property_editor.setObjectName("control-operation-properties")
         self.property_editor.valueChanged.connect(self._operation_value_changed)
         self.property_editor.bindingRequested.connect(self._operation_binding_requested)
+        detail_layout.addWidget(QLabel("Parameters"))
         detail_layout.addWidget(self.property_editor, 2)
 
         self.mapping_enabled.toggled.connect(self._mapping_toggled)
@@ -185,6 +195,22 @@ class ControlFieldsEditor(QWidget):
     @property
     def selected_field_id(self) -> str | None:
         return self._selected_id
+
+    def set_affected_by(self, affected_by: dict[str, list[str]]) -> None:
+        self._affected_by = affected_by
+        self._update_impact_label()
+
+    def _update_impact_label(self) -> None:
+        if self._selected_id is None:
+            self.impact_label.setText("Create or select a field to inspect its uses.")
+            return
+        impacts = self._affected_by.get(self._selected_id, [])
+        if not impacts:
+            self.impact_label.setText(
+                f"{self._selected_id} is not currently used by a layer or parameter."
+            )
+        else:
+            self.impact_label.setText(f"Affects: {', '.join(impacts)}")
 
     def set_recipe(self, recipe: ProjectRecipe, selected_id: str | None = None) -> None:
         previous_field = self._selected_id
@@ -232,6 +258,7 @@ class ControlFieldsEditor(QWidget):
     def _load_selected(self) -> None:
         self._syncing = True
         identifier = self._selected_id
+        self._update_impact_label()
         control = self._recipe.control_fields.get(identifier) if identifier else None
         enabled = control is not None
         self.details.setEnabled(enabled)

@@ -223,6 +223,7 @@ class ColorRampEditor(QWidget):
         actions.setSpacing(5)
         title = QLabel("COLOR RAMP")
         title.setObjectName("color-ramp-title")
+        self.title_label = title
         actions.addWidget(title)
         actions.addStretch(1)
         self.create_button = QPushButton("Create color ramp")
@@ -281,6 +282,9 @@ class ColorRampEditor(QWidget):
         self.position_spin.valueChanged.connect(self._position_changed)
         self.color_button.clicked.connect(self.choose_color)
         self.set_ramp(None, reset_selection=True)
+
+    def set_context_name(self, name: str) -> None:
+        self.title_label.setText(f"COLOR RAMP · {name}")
 
     @property
     def ramp(self) -> ColorRamp | None:

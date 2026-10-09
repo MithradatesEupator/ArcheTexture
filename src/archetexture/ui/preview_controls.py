@@ -36,6 +36,7 @@ class PreviewControls(QWidget):
         self.mesh.addItems(("UV Sphere", "Cube", "Plane", "Cylinder", "Torus", "Rounded Cube"))
         self.quality = QComboBox(self)
         self.quality.addItems(("Low", "Medium", "High"))
+        self.quality.setCurrentText("High")
         self.mode = QComboBox(self)
         self.mode.addItems(INSPECTION_MODES)
         self.resolution = QComboBox(self)
@@ -91,7 +92,6 @@ class PreviewControls(QWidget):
         controls = (
             ("Geometry", self.mesh),
             ("Mesh Quality", self.quality),
-            ("Inspection", self.mode),
             ("Map Resolution", self.resolution),
             ("Projection", self.projection),
             ("Field of View", self.fov),

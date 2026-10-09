@@ -197,8 +197,7 @@ class MainWindow(QMainWindow):
         self.workspace_mode_combo.addItem("2D Texture", "2D Texture")
         self.workspace_mode_combo.addItem("3D Material", "3D Material")
         view_row.addWidget(self.workspace_mode_combo)
-        view_row.addWidget(QLabel("View:"))
-        view_row.addWidget(QLabel("Output:"))
+        view_row.addWidget(QLabel("Edit Output:"))
         self.output_selector = QComboBox(center_panel)
         self.output_selector.setObjectName("material-output-selector")
         view_row.addWidget(self.output_selector)
@@ -223,6 +222,16 @@ class MainWindow(QMainWindow):
         self.viewport.set_display_mode(self.viewport_mode_combo.currentData())
         self.viewport_mode_combo.currentIndexChanged.connect(self._viewport_mode_changed)
         view_row.addWidget(self.viewport_mode_combo)
+        self.preview_mode_label = QLabel("Preview Mode:", center_panel)
+        self.preview_mode_combo = self.preview_controls.mode
+        self.preview_mode_combo.setObjectName("preview-mode-selector")
+        self.preview_mode_combo.setToolTip(
+            "Choose the combined material view or inspect an individual material channel."
+        )
+        view_row.addWidget(self.preview_mode_label)
+        view_row.addWidget(self.preview_mode_combo)
+        self.preview_mode_label.hide()
+        self.preview_mode_combo.hide()
         self.seamlessness_label = QLabel("Seamless: Unknown")
         self.seamlessness_label.setObjectName("seamlessness-status")
         self.seamlessness_label.setToolTip(
@@ -231,6 +240,10 @@ class MainWindow(QMainWindow):
         view_row.addWidget(self.seamlessness_label)
         view_row.addStretch(1)
         center_layout.addLayout(view_row)
+        self.context_breadcrumb = QLabel(center_panel)
+        self.context_breadcrumb.setObjectName("editing-context-breadcrumb")
+        self.context_breadcrumb.setContentsMargins(10, 2, 8, 2)
+        center_layout.addWidget(self.context_breadcrumb)
         from PySide6.QtWidgets import QStackedWidget
 
         self.workspace_stack = QStackedWidget(center_panel)
@@ -252,14 +265,19 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         self.right_tabs = QTabWidget(self)
-        self.right_tabs.addTab(self.property_editor, "Properties")
         self.right_tabs.addTab(self.control_fields_editor, "Control Fields")
         self.preview_controls_scroll = QScrollArea(self)
         self.preview_controls_scroll.setWidgetResizable(True)
         self.preview_controls_scroll.setWidget(self.preview_controls)
         self.right_tabs.addTab(self.preview_controls_scroll, "Preview")
         self.right_tabs.setObjectName("right-side-tabs")
-        splitter.addWidget(self.right_tabs)
+        self.inspector_splitter = QSplitter(Qt.Orientation.Vertical, self)
+        self.inspector_splitter.addWidget(self.property_editor)
+        self.inspector_splitter.addWidget(self.right_tabs)
+        self.inspector_splitter.setStretchFactor(0, 3)
+        self.inspector_splitter.setStretchFactor(1, 2)
+        self.inspector_splitter.setSizes([470, 340])
+        splitter.addWidget(self.inspector_splitter)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
@@ -418,6 +436,8 @@ class MainWindow(QMainWindow):
 
     def _workspace_mode_changed(self, index: int) -> None:
         is_3d = self.workspace_mode_combo.itemData(index) == "3D Material"
+        self.preview_mode_label.setVisible(is_3d)
+        self.preview_mode_combo.setVisible(is_3d)
         if not is_3d:
             self._preview_request_id += 1
         self.workspace_stack.setCurrentIndex(
@@ -425,7 +445,6 @@ class MainWindow(QMainWindow):
         )
         if is_3d:
             self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
-            self.right_tabs.setCurrentWidget(self.preview_controls_scroll)
             self._apply_preview_settings()
             self.preview_viewport.set_mesh(
                 self.preview_controls.mesh.currentText(),
@@ -668,7 +687,7 @@ class MainWindow(QMainWindow):
     def _reset_preview(self) -> None:
         self.preview_viewport.reset_preview()
         self.preview_controls.mesh.setCurrentText("UV Sphere")
-        self.preview_controls.quality.setCurrentText("Medium")
+        self.preview_controls.quality.setCurrentText("High")
         self.preview_controls.mode.setCurrentText("Material")
         self.preview_controls.lighting.setCurrentText("Neutral Studio")
         self.preview_controls.background.setCurrentText("Dark Neutral")
@@ -773,6 +792,18 @@ class MainWindow(QMainWindow):
         ):
             self._selected_instance_id = layer.source.instance_id if layer.source else None
         self.layers_panel.set_recipe(recipe, self._selected_layer_id, output.output_id)
+        self.layers_panel.set_pipeline_descriptor(self._layer_descriptor(layer))
+        source_name = REGISTRY.get(layer.source.operation_id).name
+        transform = next(
+            (item for item in layer.transforms if item.instance_id == self._selected_instance_id),
+            None,
+        )
+        selected_name = REGISTRY.get(transform.operation_id).name if transform else source_name
+        self.context_breadcrumb.setText(
+            f"{output.name}  ›  {layer.name}  ›  {source_name}"
+            + (f"  ›  {selected_name}" if transform else "")
+        )
+        self.context_breadcrumb.setToolTip(self.context_breadcrumb.text())
         mask_index = self.viewport_mode_combo.findData("mask_preview")
         if mask_index >= 0:
             masked = layer.mask is not None
@@ -797,6 +828,8 @@ class MainWindow(QMainWindow):
                 and pipeline_output_type(layer.source, layer.transforms) == "scalar"
             ),
         )
+        self.color_ramp_editor.set_context_name(layer.name)
+        self.control_fields_editor.set_affected_by(self._control_field_impact_labels(recipe))
         if refresh_properties:
             self._refresh_property_editor(recipe)
         self._update_title_and_actions()
@@ -1128,7 +1161,66 @@ class MainWindow(QMainWindow):
 
     def _select_instance(self, instance_id: str) -> None:
         self._selected_instance_id = instance_id
-        self._refresh_property_editor(self.document.recipe)
+        recipe = self.document.recipe
+        self._refresh_property_editor(recipe)
+        self._refresh_context_breadcrumb(recipe)
+
+    @staticmethod
+    def _layer_descriptor(layer: LayerRecipe) -> str:
+        stages = [REGISTRY.get(layer.source.operation_id).name]
+        stages.extend(
+            REGISTRY.get(item.operation_id).name
+            if item.enabled
+            else f"{REGISTRY.get(item.operation_id).name} (disabled)"
+            for item in layer.transforms
+        )
+        if layer.color_ramp is not None:
+            stages.append("Color Ramp")
+        return " → ".join(stages)
+
+    def _refresh_context_breadcrumb(self, recipe: ProjectRecipe) -> None:
+        output, layer = self._selected_output(recipe), self._layer(recipe)
+        source_name = REGISTRY.get(layer.source.operation_id).name
+        selected = next(
+            (item for item in layer.transforms if item.instance_id == self._selected_instance_id),
+            None,
+        )
+        text = f"{output.name}  ›  {layer.name}  ›  {source_name}"
+        if selected is not None:
+            text += f"  ›  {REGISTRY.get(selected.operation_id).name}"
+        self.context_breadcrumb.setText(text)
+        self.context_breadcrumb.setToolTip(text)
+
+    @staticmethod
+    def _control_field_impact_labels(recipe: ProjectRecipe) -> dict[str, list[str]]:
+        from archetexture.core.parameters import ControlFieldBinding
+
+        impacts = {identifier: [] for identifier in recipe.control_fields}
+
+        def add_bindings(value, label):
+            if isinstance(value, ControlFieldBinding):
+                if value.source_id in impacts and label not in impacts[value.source_id]:
+                    impacts[value.source_id].append(label)
+            elif isinstance(value, dict):
+                for child in value.values():
+                    add_bindings(child, label)
+            elif isinstance(value, (tuple, list)):
+                for child in value:
+                    add_bindings(child, label)
+
+        for output in recipe.outputs:
+            for layer in output.layers:
+                if layer.mask is not None and layer.mask.source_id in impacts:
+                    impacts[layer.mask.source_id].append(f"{output.name} › {layer.name} mask")
+                for instance in [layer.source, *layer.transforms]:
+                    for parameter, value in instance.parameters.items():
+                        add_bindings(value, f"{output.name} › {layer.name} › {parameter}")
+                    add_bindings(instance.influence, f"{output.name} › {layer.name} influence")
+        for identifier, control in recipe.control_fields.items():
+            for instance in [control.source, *control.transforms]:
+                for parameter, value in instance.parameters.items():
+                    add_bindings(value, f"Control Field {identifier} › {parameter}")
+        return impacts
 
     def _property_changed(self, parameter_id: str, value) -> None:
         recipe = self.document.recipe
@@ -1192,15 +1284,18 @@ class MainWindow(QMainWindow):
 
     def _add_layer(self) -> None:
         recipe = self.document.recipe
-        number = 1
+        base_name = REGISTRY.get("generator.constant").name
+        name = base_name
+        number = 2
         names = {layer.name for layer in self._layers_for(recipe)}
-        while f"Layer {number}" in names:
+        while name in names:
+            name = f"{base_name} {number}"
             number += 1
         layer_id = f"layer-{uuid.uuid4().hex[:12]}"
         self._layers_for(recipe).append(
             LayerRecipe(
                 layer_id,
-                f"Layer {number}",
+                name,
                 OperationInstance(
                     f"source-{uuid.uuid4().hex[:12]}",
                     "generator.constant",

@@ -230,7 +230,7 @@ def test_dark_mode_renders_right_tabs_and_representative_controls(qtbot, tmp_pat
 
     window.right_tabs.setCurrentIndex(0)
     qtbot.wait(20)
-    _assert_widget_is_dark(window.right_tabs, "Properties tab pane")
+    _assert_widget_is_dark(window.right_tabs, "Auxiliary inspector tab pane")
     _assert_widget_is_dark(window.property_editor, "Properties body")
     _assert_widget_is_dark(window.right_tabs.tabBar(), "right tab bar")
     spin = window.property_editor.findChild(QSpinBox, "parameter-seed")
@@ -239,7 +239,7 @@ def test_dark_mode_renders_right_tabs_and_representative_controls(qtbot, tmp_pat
     _assert_widget_is_dark(spin, "QSpinBox", 0.55)
     _assert_widget_is_dark(double_spin, "QDoubleSpinBox", 0.55)
 
-    window.right_tabs.setCurrentIndex(1)
+    window.right_tabs.setCurrentIndex(0)
     qtbot.wait(20)
     _assert_widget_is_dark(window.right_tabs, "Control Fields tab pane")
     _assert_widget_is_dark(window.control_fields_editor, "Control Fields body")
