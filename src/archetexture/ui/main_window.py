@@ -70,6 +70,7 @@ from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.preview_controls import PreviewControls
 from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
 from archetexture.ui.property_editor import PropertyEditor
+from archetexture.ui.simple_material_panel import SimpleMaterialPanel
 from archetexture.ui.theme import palette_for_mode, theme_stylesheet
 from archetexture.ui.viewport import TextureViewport
 
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
         self.viewport = TextureViewport(self)
         self.preview_viewport = MaterialGLViewport(self)
         self.preview_controls = PreviewControls(self)
+        self.simple_material_panel = SimpleMaterialPanel(self)
         self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
         self.control_fields_editor = ControlFieldsEditor(self)
@@ -184,6 +186,8 @@ class MainWindow(QMainWindow):
         self.layers_panel.copyToOutputRequested.connect(self._copy_layer_to_output)
         self.layers_panel.moveToOutputRequested.connect(self._move_layer_to_output)
         self.layers_panel.createOutputRequested.connect(self._create_output_from_layer)
+        self.simple_material_panel.channelSelected.connect(self._select_simple_channel)
+        self.simple_material_panel.controlParameterChanged.connect(self._simple_control_changed)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
@@ -197,7 +201,8 @@ class MainWindow(QMainWindow):
         self.workspace_mode_combo.addItem("2D Texture", "2D Texture")
         self.workspace_mode_combo.addItem("3D Material", "3D Material")
         view_row.addWidget(self.workspace_mode_combo)
-        view_row.addWidget(QLabel("Edit Output:"))
+        self.edit_output_label = QLabel("Edit Output:", center_panel)
+        view_row.addWidget(self.edit_output_label)
         self.output_selector = QComboBox(center_panel)
         self.output_selector.setObjectName("material-output-selector")
         view_row.addWidget(self.output_selector)
@@ -205,6 +210,8 @@ class MainWindow(QMainWindow):
         self.manage_outputs_button = QPushButton("Manage Outputs…", center_panel)
         self.manage_outputs_button.clicked.connect(self._manage_outputs)
         view_row.addWidget(self.manage_outputs_button)
+        self.viewport_mode_label = QLabel("2D View:", center_panel)
+        view_row.addWidget(self.viewport_mode_label)
         self.viewport_mode_combo = QComboBox(center_panel)
         self.viewport_mode_combo.setObjectName("viewport-display-mode")
         for label, mode in (
@@ -228,10 +235,7 @@ class MainWindow(QMainWindow):
         self.preview_mode_combo.setToolTip(
             "Choose the combined material view or inspect an individual material channel."
         )
-        view_row.addWidget(self.preview_mode_label)
-        view_row.addWidget(self.preview_mode_combo)
         self.preview_mode_label.hide()
-        self.preview_mode_combo.hide()
         self.seamlessness_label = QLabel("Seamless: Unknown")
         self.seamlessness_label.setObjectName("seamlessness-status")
         self.seamlessness_label.setToolTip(
@@ -244,6 +248,11 @@ class MainWindow(QMainWindow):
         self.context_breadcrumb.setObjectName("editing-context-breadcrumb")
         self.context_breadcrumb.setContentsMargins(10, 2, 8, 2)
         center_layout.addWidget(self.context_breadcrumb)
+        self.preview_mode_indicator = QLabel("MATERIAL PREVIEW", center_panel)
+        self.preview_mode_indicator.setObjectName("preview-mode-indicator")
+        self.preview_mode_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.preview_mode_indicator.setVisible(False)
+        center_layout.addWidget(self.preview_mode_indicator)
         from PySide6.QtWidgets import QStackedWidget
 
         self.workspace_stack = QStackedWidget(center_panel)
@@ -260,19 +269,38 @@ class MainWindow(QMainWindow):
         left_panel = QWidget(self)
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self.simple_material_panel.channel_widget, 0)
         left_layout.addWidget(self.layers_panel, 1)
         left_layout.addWidget(self.pipeline_panel, 1)
         splitter.addWidget(left_panel)
         splitter.addWidget(center_panel)
         self.right_tabs = QTabWidget(self)
-        self.right_tabs.addTab(self.control_fields_editor, "Control Fields")
+        self.simple_controls_scroll = QScrollArea(self)
+        self.simple_controls_scroll.setWidgetResizable(True)
+        self.simple_controls_scroll.setWidget(self.simple_material_panel.controls_widget)
+        self.right_tabs.addTab(self.simple_controls_scroll, "Simple")
+        self.advanced_tabs = QTabWidget(self)
+        self.advanced_tabs.setObjectName("advanced-inspector-tabs")
+        self.advanced_tabs.addTab(self.control_fields_editor, "Control Fields")
+        self.advanced_tabs.setTabToolTip(
+            0,
+            "Reusable value fields that drive layer parameters, masks, and derived outputs.",
+        )
         self.preview_controls_scroll = QScrollArea(self)
         self.preview_controls_scroll.setWidgetResizable(True)
         self.preview_controls_scroll.setWidget(self.preview_controls)
-        self.right_tabs.addTab(self.preview_controls_scroll, "Preview")
+        self.advanced_tabs.addTab(self.preview_controls_scroll, "View Settings")
+        self.right_tabs.addTab(self.advanced_tabs, "Advanced")
         self.right_tabs.setObjectName("right-side-tabs")
+        self.right_tabs.setCurrentIndex(0)
+        self.right_tabs.setMinimumWidth(285)
+        self.right_tabs.currentChanged.connect(self._authoring_mode_changed)
         self.inspector_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self.inspector_splitter.addWidget(self.property_editor)
+        self.property_editor_scroll = QScrollArea(self)
+        self.property_editor_scroll.setWidgetResizable(True)
+        self.property_editor_scroll.setWidget(self.property_editor)
+        self.property_editor_scroll.setMinimumWidth(270)
+        self.inspector_splitter.addWidget(self.property_editor_scroll)
         self.inspector_splitter.addWidget(self.right_tabs)
         self.inspector_splitter.setStretchFactor(0, 3)
         self.inspector_splitter.setStretchFactor(1, 2)
@@ -298,6 +326,7 @@ class MainWindow(QMainWindow):
         self._selected_instance_id = self._layer().source.instance_id
         self._configure_theme()
         self._refresh_document(request_render=True)
+        self._authoring_mode_changed(self.right_tabs.currentIndex())
 
     def _create_actions(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -436,24 +465,69 @@ class MainWindow(QMainWindow):
 
     def _workspace_mode_changed(self, index: int) -> None:
         is_3d = self.workspace_mode_combo.itemData(index) == "3D Material"
-        self.preview_mode_label.setVisible(is_3d)
-        self.preview_mode_combo.setVisible(is_3d)
+        self.preview_mode_label.hide()
+        self.preview_mode_indicator.setVisible(is_3d)
+        self.viewport_mode_label.setVisible(not is_3d)
+        self.viewport_mode_combo.setVisible(not is_3d)
         if not is_3d:
             self._preview_request_id += 1
         self.workspace_stack.setCurrentIndex(
             (2 if self.preview_viewport._gl_error else 1) if is_3d else 0
         )
         if is_3d:
+            # A new 3D workspace always begins in the complete material view.
+            self.preview_controls.mode.setCurrentText("Material")
             self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
             self._apply_preview_settings()
             self.preview_viewport.set_mesh(
                 self.preview_controls.mesh.currentText(),
                 self.preview_controls.quality.currentText(),
             )
+            self._update_preview_mode_indicator()
             self._request_preview()
         settings = self._theme_settings()
         settings.setValue("preview/workspace", "3D Material" if is_3d else "2D Texture")
         settings.sync()
+
+    def _authoring_mode_changed(self, index: int) -> None:
+        simple = index == 0
+        self.simple_material_panel.channel_widget.setVisible(simple)
+        self.edit_output_label.setVisible(not simple)
+        self.output_selector.setVisible(not simple)
+        self.manage_outputs_button.setVisible(not simple)
+        self.simple_material_panel.set_recipe(self.document.recipe, self._selected_output_id)
+        self._refresh_document(request_render=False, refresh_properties=False)
+
+    def _show_control_fields(self) -> None:
+        self.right_tabs.setCurrentWidget(self.advanced_tabs)
+        self.advanced_tabs.setCurrentWidget(self.control_fields_editor)
+
+    def _select_simple_channel(self, semantic: str) -> None:
+        outputs = SimpleMaterialPanel.outputs_for_semantic(self.document.recipe, semantic)
+        if not outputs:
+            return
+        index = self.output_selector.findData(outputs[0].output_id)
+        if index >= 0:
+            self.output_selector.setCurrentIndex(index)
+
+    def _simple_control_changed(
+        self, control_name: str, instance_id: str, parameter_id: str, value
+    ) -> None:
+        recipe = copy.deepcopy(self.document.recipe)
+        control = recipe.control_fields.get(control_name)
+        if control is None:
+            return
+        instance = (
+            control.source
+            if control.source.instance_id == instance_id
+            else next(
+                (item for item in control.transforms if item.instance_id == instance_id), None
+            )
+        )
+        if instance is None or instance.parameters.get(parameter_id) == value:
+            return
+        instance.parameters[parameter_id] = value
+        self._commit_recipe(recipe, control_field_id=control_name)
 
     def _preview_gl_initialized(self, available: bool, message: str) -> None:
         if available:
@@ -462,6 +536,7 @@ class MainWindow(QMainWindow):
                 self.workspace_stack.setCurrentWidget(self.preview_viewport)
                 self._request_preview()
         else:
+            self.preview_mode_indicator.setText("3D PREVIEW UNAVAILABLE")
             self.preview_unavailable_label.setText(
                 message or self.preview_viewport.unavailable_message
             )
@@ -474,6 +549,14 @@ class MainWindow(QMainWindow):
             self.preview_controls.view.setCurrentText("Orbit")
             self.preview_controls.view.blockSignals(False)
 
+    def _update_preview_mode_indicator(self) -> None:
+        inspection = self.preview_viewport.inspection
+        text = (
+            "MATERIAL PREVIEW" if inspection == "Material" else f"{inspection.upper()} INSPECTION"
+        )
+        self.preview_mode_indicator.setText(text)
+        self.preview_mode_indicator.setToolTip(f"3D shader mode: {inspection}")
+
     def _preview_background_color_changed(self, color: str) -> None:
         self.preview_controls.custom_background = QColor(color)
         self._apply_preview_settings()
@@ -482,6 +565,7 @@ class MainWindow(QMainWindow):
         state = self.preview_controls.view_state()
         view = self.preview_viewport
         view.inspection = state["inspection"]
+        self._update_preview_mode_indicator()
         view.mesh_type, view.quality = state["mesh"], state["quality"]
         view.lighting, view.background, view.exposure = (
             state["lighting"],
@@ -507,10 +591,8 @@ class MainWindow(QMainWindow):
             state["auto_rotate"],
             state["auto_speed"],
         )
-        if state["view"] not in {"Orbit", "Reset / Frame"}:
+        if state["view"] != "Orbit":
             view.camera.set_view(state["view"])
-        elif state["view"] == "Reset / Frame":
-            view.camera.reset()
         settings = self._theme_settings()
         for key, value in state.items():
             settings.setValue(f"preview/{key}", value)
@@ -529,6 +611,8 @@ class MainWindow(QMainWindow):
         self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
         state = self.preview_controls.view_state()
         for key in state:
+            if key in {"mesh", "quality", "inspection"}:
+                continue
             saved = settings.value(f"preview/{key}", None)
             if saved is None:
                 continue
@@ -595,6 +679,11 @@ class MainWindow(QMainWindow):
         index = self.workspace_mode_combo.findData(workspace)
         if index >= 0:
             self.workspace_mode_combo.setCurrentIndex(index)
+        self.preview_controls.mesh.setCurrentText("UV Sphere")
+        self.preview_controls.quality.setCurrentText("High")
+        self.preview_controls.mode.setCurrentText("Material")
+        if self.preview_controls.view.currentText() == "Reset / Frame":
+            self.preview_controls.view.setCurrentText("Orbit")
 
     def _preview_control_changed(self, kind: str) -> None:
         if kind.startswith("binding:"):
@@ -792,7 +881,12 @@ class MainWindow(QMainWindow):
         ):
             self._selected_instance_id = layer.source.instance_id if layer.source else None
         self.layers_panel.set_recipe(recipe, self._selected_layer_id, output.output_id)
-        self.layers_panel.set_pipeline_descriptor(self._layer_descriptor(layer))
+        descriptor = self._layer_descriptor(layer)
+        if self.right_tabs.currentIndex() == 0:
+            channel = dict(SimpleMaterialPanel.CHANNELS).get(output.semantic)
+            if channel:
+                descriptor = f"{channel} — {descriptor}"
+        self.layers_panel.set_pipeline_descriptor(descriptor)
         source_name = REGISTRY.get(layer.source.operation_id).name
         transform = next(
             (item for item in layer.transforms if item.instance_id == self._selected_instance_id),
@@ -818,6 +912,7 @@ class MainWindow(QMainWindow):
         self.property_editor.set_project_path(self.document.project_path)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
         self.preview_controls.set_recipe(recipe, self.preview_binding)
+        self.simple_material_panel.set_recipe(recipe, output.output_id)
         self.control_fields_editor.property_editor.set_project_path(self.document.project_path)
         self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
@@ -1535,7 +1630,7 @@ class MainWindow(QMainWindow):
         layer = next((item for item in self._layers_for(recipe) if item.layer_id == layer_id), None)
         if layer is None or layer.mask is None:
             return
-        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self._show_control_fields()
         self.control_fields_editor.select_field(layer.mask.source_id)
         self._selected_control_field_id = layer.mask.source_id
 
@@ -1564,7 +1659,7 @@ class MainWindow(QMainWindow):
         )
         layer.mask = ControlFieldBinding(identifier)
         self._selected_control_field_id = identifier
-        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self._show_control_fields()
         self._commit_recipe(recipe, control_field_id=identifier)
 
     def _asset_reference(self, path: str | Path) -> AssetReference:
@@ -1669,7 +1764,7 @@ class MainWindow(QMainWindow):
         recipe.control_fields[identifier] = ControlFieldRecipe(source)
         layer.mask = ControlFieldBinding(identifier)
         self._selected_control_field_id = identifier
-        self.right_tabs.setCurrentWidget(self.control_fields_editor)
+        self._show_control_fields()
         self._commit_recipe(recipe, control_field_id=identifier)
 
     def _control_field_selected(self, identifier: str) -> None:
@@ -1911,7 +2006,7 @@ class MainWindow(QMainWindow):
     def _main_binding_requested(self, key: str, spec, existing) -> None:
         recipe = self.document.recipe
         if not recipe.control_fields:
-            self.right_tabs.setCurrentWidget(self.control_fields_editor)
+            self._show_control_fields()
             self.statusBar().showMessage("Create a control field before binding a parameter", 5000)
             return
         dialog = BindingDialog(recipe.control_fields, spec, existing, self)

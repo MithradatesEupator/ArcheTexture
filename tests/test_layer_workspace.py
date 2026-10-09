@@ -150,7 +150,9 @@ def test_layer_identity_context_and_parameters_stay_visible(qtbot):
     item = window.layers_panel.layer_list.currentItem()
     assert window.layers_panel.layer_list.EditTrigger.DoubleClicked
     assert window.layers_panel.layer_list.EditTrigger.EditKeyPressed
-    assert window.layers_panel.pipeline_descriptor.text() == window._layer_descriptor(layer)
+    assert window.layers_panel.pipeline_descriptor.text() == (
+        f"Color — {window._layer_descriptor(layer)}"
+    )
     assert layer.name in window.color_ramp_editor.title_label.text()
     assert window.property_editor.isVisible() or not window.property_editor.isHidden()
     assert layer.name in window.context_breadcrumb.text()
@@ -163,7 +165,7 @@ def test_layer_identity_context_and_parameters_stay_visible(qtbot):
     original_name = window._layer().name
     window._source_changed("generator.cellular")
     assert window._layer().name == original_name
-    assert window.layers_panel.pipeline_descriptor.text().startswith("Cellular")
+    assert window.layers_panel.pipeline_descriptor.text().startswith("Color — Cellular")
     assert item is not None
     window._add_layer()
     assert window._layer().name.startswith("Constant")

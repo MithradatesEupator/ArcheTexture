@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import ctypes
 import json
 import os
@@ -8,8 +9,8 @@ import uuid
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QImage, QWheelEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -303,6 +304,8 @@ def _edit_height_source(recipe) -> None:
 
 
 def _select_pipeline_context(window: MainWindow) -> None:
+    window.right_tabs.setCurrentIndex(1)
+    window.advanced_tabs.setCurrentWidget(window.control_fields_editor)
     height_output = next(
         item for item in window.document.recipe.outputs if item.semantic == "height"
     )
@@ -359,6 +362,152 @@ def _exercise_all_outputs_and_layers(window: MainWindow) -> dict[str, int]:
     return counts
 
 
+def _wheel_event(local: QPoint, global_position: QPoint) -> QWheelEvent:
+    return QWheelEvent(
+        QPointF(local),
+        QPointF(global_position),
+        QPoint(0, 0),
+        QPoint(0, 120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+
+
+def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
+    panel = window.simple_material_panel
+    assert window.right_tabs.currentIndex() == 0
+    assert window.output_selector.isHidden()
+    assert window.preview_controls.mesh.currentText() == "UV Sphere"
+    assert window.preview_controls.quality.currentText() == "High"
+    assert window.preview_controls.mode.currentText() == "Material"
+    if window.document.recipe.control_fields:
+        assert set(panel.control_spins) >= {"Scale", "Wear"}
+
+    for semantic, _label in panel.CHANNELS:
+        panel.channel_buttons[semantic].click()
+        assert window._selected_output().semantic == semantic
+        assert window.layers_panel.layer_list.count() > 0
+    panel.channel_buttons["base_color"].click()
+    assert window.layers_panel.pipeline_descriptor.text().startswith("Color — ")
+
+    scale_difference = None
+    if "Scale" in panel.control_spins:
+        _before_control, before_raw, _snapshot = _render_preview(window)
+        recipe_before = copy.deepcopy(window.document.recipe)
+        scale = panel.control_spins["Scale"]
+        start_scale = scale.value()
+        target_scale = min(scale.maximum(), max(scale.minimum(), start_scale * 1.65))
+        if target_scale == start_scale:
+            target_scale = min(scale.maximum(), start_scale + 0.5)
+        scale.setValue(target_scale)
+        applied_scale = window.document.recipe.control_fields["Scale"].source.parameters[
+            panel.control_targets["Scale"][1]
+        ]
+        assert abs(float(applied_scale) - target_scale) < 0.001
+        _after_control, after_raw, _snapshot = _render_preview(window)
+        scale_difference = _image_difference(before_raw, after_raw)
+        assert scale_difference > 0.05, "Simple Scale control did not update the material preview"
+        window.undo()
+        assert window.document.recipe == recipe_before
+        _render_preview(window)
+
+    selection = (
+        window._selected_output_id,
+        window._selected_layer_id,
+        window._selected_instance_id,
+    )
+    state_recipe = copy.deepcopy(window.document.recipe)
+    state_history = copy.deepcopy(window.document.history.entries)
+    state_index = window.document.history.index
+    state_dirty = window.document.dirty
+    for index in (1, 0, 1, 0):
+        window.right_tabs.setCurrentIndex(index)
+        assert window.document.recipe == state_recipe
+        assert window.document.history.entries == state_history
+        assert window.document.history.index == state_index
+        assert window.document.dirty == state_dirty
+        assert (
+            window._selected_output_id,
+            window._selected_layer_id,
+            window._selected_instance_id,
+        ) == selection
+    assert window.output_selector.isHidden()
+    window.right_tabs.setCurrentIndex(1)
+    window.advanced_tabs.setCurrentWidget(window.preview_controls_scroll)
+    assert not window.output_selector.isHidden()
+
+    view = window.preview_viewport
+    start_distance = view.camera.distance
+    combo = window.preview_controls.view
+    combo_position = combo.rect().center()
+    QApplication.sendEvent(
+        combo,
+        _wheel_event(combo_position, combo.mapToGlobal(combo_position)),
+    )
+    assert abs(view.camera.distance - start_distance) < 1e-6
+    window.preview_controls.view.setCurrentText("Front")
+    assert abs(view.camera.distance - start_distance) < 1e-6
+    combo.showPopup()
+    QApplication.processEvents()
+    popup_view = combo.view()
+    popup_position = popup_view.viewport().rect().center()
+    QApplication.sendEvent(
+        popup_view.viewport(),
+        _wheel_event(popup_position, popup_view.viewport().mapToGlobal(popup_position)),
+    )
+    combo.hidePopup()
+    assert abs(view.camera.distance - start_distance) < 1e-6
+    scroll_bar = window.preview_controls_scroll.verticalScrollBar()
+    scroll_position = window.preview_controls_scroll.viewport().rect().center()
+    QApplication.sendEvent(
+        window.preview_controls_scroll.viewport(),
+        _wheel_event(
+            scroll_position,
+            window.preview_controls_scroll.viewport().mapToGlobal(scroll_position),
+        ),
+    )
+    assert abs(view.camera.distance - start_distance) < 1e-6
+
+    viewport_position = view.rect().center()
+    QApplication.sendEvent(
+        view,
+        _wheel_event(viewport_position, view.mapToGlobal(viewport_position)),
+    )
+    assert view.camera.distance < start_distance, "Wheel over the 3D viewport did not zoom"
+    window.preview_controls.mode.setCurrentText("Normal")
+    assert window.preview_mode_indicator.text() == "NORMAL INSPECTION"
+    window.preview_controls.mode.setCurrentText("Material")
+    assert window.preview_mode_indicator.text() == "MATERIAL PREVIEW"
+    window.preview_controls.view.setCurrentText("Orbit")
+
+    # Confirm the narrow right inspector remains scrollable at a compact common window size.
+    window.resize(920, 640)
+    window.show()
+    window.right_tabs.setCurrentIndex(1)
+    window.advanced_tabs.setCurrentWidget(window.preview_controls_scroll)
+    QApplication.processEvents()
+    scroll_bar = window.preview_controls_scroll.verticalScrollBar()
+    assert scroll_bar.maximum() > 0
+    window.preview_controls_scroll.ensureWidgetVisible(window.preview_controls.reset)
+    QApplication.processEvents()
+    assert scroll_bar.value() == scroll_bar.maximum()
+    window.right_tabs.setCurrentIndex(0)
+    window.resize(1560, 980)
+    window.preview_controls.mode.setCurrentText("Material")
+    return {
+        "channels": [semantic for semantic, _label in panel.CHANNELS],
+        "scale_control_frame_difference": scale_difference,
+        "simple_advanced_preserved_recipe_history_selection": True,
+        "combo_popup_and_scroll_no_zoom": True,
+        "viewport_wheel_zoomed": True,
+        "mode_indicator": window.preview_mode_indicator.text(),
+        "compact_window_scroll_reaches_bottom": True,
+        "simple_controls_available": list(panel.control_spins),
+    }
+
+
 def main() -> int:
     if os.name != "nt":
         raise RuntimeError("ATX 26 image acceptance requires native Windows Qt.")
@@ -390,11 +539,15 @@ def main() -> int:
         message="OpenGL preview did not initialize",
     )
     assert window.preview_viewport.available, window.preview_viewport.unavailable_message
+    assert window.preview_viewport.mesh_type == "UV Sphere"
+    assert window.preview_viewport.quality == "High"
+    assert window.preview_viewport.inspection == "Material"
     _wait_until(
         lambda: window.preview_viewport.snapshot is not None,
         timeout=60,
         message="initial material snapshot did not arrive for native diagnostics",
     )
+    simple_metrics = _exercise_simple_workflow(window)
     diagnostic_metrics = _diagnose_sampling(window, evidence_dir)
     report_path.write_text(json.dumps({"sampling_diagnostics": diagnostic_metrics}, indent=2))
     print(f"ATX26 native sampling diagnostics: {json.dumps(diagnostic_metrics)}", flush=True)
@@ -465,7 +618,8 @@ def main() -> int:
             window._selected_instance_id,
         )
     assert window.preview_mode_combo.currentText() == "Material"
-    assert not window.preview_mode_label.isHidden()
+    assert window.preview_mode_indicator.text() == "MATERIAL PREVIEW"
+    assert not window.preview_mode_indicator.isHidden()
 
     # Edit Output and Preview Mode are independent; the combined preview remains bound to all maps.
     metallic_output = next(
@@ -653,6 +807,7 @@ def main() -> int:
         "qt_platform": app.platformName(),
         "gl_available": window.preview_viewport.available,
         "material": material_metrics,
+        "simple_workflow": simple_metrics,
         "sampling_diagnostics": diagnostic_metrics,
         "material_roughness_view_difference": roughness_difference,
         "base_color_view_difference": base_color_view_difference,

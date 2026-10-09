@@ -278,7 +278,8 @@ def test_gui_add_mask_selects_field_and_exposes_preview_and_navigation(qtbot):
     layer = window._layer()
     assert layer.mask is not None
     assert layer.mask.source_id in window.document.recipe.control_fields
-    assert window.right_tabs.currentWidget() is window.control_fields_editor
+    assert window.right_tabs.currentWidget() is window.advanced_tabs
+    assert window.advanced_tabs.currentWidget() is window.control_fields_editor
     assert window.control_fields_editor.selected_field_id == layer.mask.source_id
     assert window.viewport_mode_combo.findData("mask_preview") >= 0
     window.layers_panel.open_mask_button.click()

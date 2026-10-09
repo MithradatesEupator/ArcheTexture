@@ -239,9 +239,10 @@ def test_dark_mode_renders_right_tabs_and_representative_controls(qtbot, tmp_pat
     _assert_widget_is_dark(spin, "QSpinBox", 0.55)
     _assert_widget_is_dark(double_spin, "QDoubleSpinBox", 0.55)
 
-    window.right_tabs.setCurrentIndex(0)
+    window.right_tabs.setCurrentIndex(1)
+    window.advanced_tabs.setCurrentIndex(0)
     qtbot.wait(20)
-    _assert_widget_is_dark(window.right_tabs, "Control Fields tab pane")
+    _assert_widget_is_dark(window.advanced_tabs, "Control Fields tab pane")
     _assert_widget_is_dark(window.control_fields_editor, "Control Fields body")
     disabled_numeric = window.control_fields_editor.mapping_min
     assert not disabled_numeric.isEnabled()

@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -30,15 +29,48 @@ def main() -> int:
         / "v1.0"
         / "powershell.exe"
     )
-    report_root = Path(tempfile.mkdtemp(prefix=".tmp-atx26-run-", dir=REPOSITORY))
-    evidence_dir = REPOSITORY / ".tmp-atx26-evidence"
+    report_root = REPOSITORY
+    evidence_dir = REPOSITORY / ".tmp-atx27-evidence"
     evidence_dir.mkdir(parents=True, exist_ok=True)
+    isolated_local_app_data = REPOSITORY / ".tmp-atx27-launcher" / "Local"
+    isolated_roaming_app_data = REPOSITORY / ".tmp-atx27-launcher" / "Roaming"
+    preparation_environment = os.environ.copy()
+    preparation_environment["ATX27_LOCALAPPDATA"] = str(isolated_local_app_data)
+    preparation_environment["ATX27_APPDATA"] = str(isolated_roaming_app_data)
+    preparation_environment["ATX27_INTERPRETER_CONFIG"] = str(
+        Path(os.environ["LOCALAPPDATA"]) / "ArcheTexture" / "pythonw-path.txt"
+    )
+    prepare_isolated_environment = subprocess.run(
+        [
+            str(powershell),
+            "-NoProfile",
+            "-Command",
+            (
+                "$ErrorActionPreference = 'Stop'; "
+                "$state = Join-Path $env:ATX27_LOCALAPPDATA 'ArcheTexture'; "
+                "New-Item -ItemType Directory -Path $state,$env:ATX27_APPDATA -Force | Out-Null; "
+                "$pythonw = (Get-Content -LiteralPath $env:ATX27_INTERPRETER_CONFIG -Raw).Trim(); "
+                "Set-Content -LiteralPath (Join-Path $state 'pythonw-path.txt') "
+                "-Value $pythonw -Encoding UTF8"
+            ),
+        ],
+        cwd=REPOSITORY,
+        env=preparation_environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if prepare_isolated_environment.returncode:
+        raise RuntimeError(
+            "Could not prepare isolated launcher settings: " + prepare_isolated_environment.stderr
+        )
+    isolated_state = isolated_local_app_data / "ArcheTexture"
     cases = ["default", *(starter.name for starter in MATERIAL_STARTERS)]
     results = []
     failures = []
 
     for index, starter_name in enumerate(cases):
-        report_path = report_root / f"{index:02d}.json"
+        report_path = report_root / f".tmp-atx27-{index:02d}-report.json"
         environment = os.environ.copy()
         for key in (
             "CONDA_PREFIX",
@@ -51,6 +83,9 @@ def main() -> int:
         environment["ATX26_STARTER"] = starter_name
         environment["ATX26_REPORT"] = str(report_path)
         environment["ATX26_EVIDENCE_DIR"] = str(evidence_dir)
+        environment["LOCALAPPDATA"] = str(isolated_local_app_data)
+        environment["APPDATA"] = str(isolated_roaming_app_data)
+        environment["QT_SCALE_FACTOR"] = ("1.0", "1.25", "1.5")[index % 3]
         command = [
             str(powershell),
             "-NoProfile",
@@ -64,7 +99,7 @@ def main() -> int:
         ]
         completed = subprocess.run(
             command,
-            cwd=Path(tempfile.gettempdir()),
+            cwd=Path(os.environ.get("TEMP", str(REPOSITORY))),
             env=environment,
             capture_output=True,
             text=True,
@@ -72,7 +107,7 @@ def main() -> int:
             check=False,
         )
         if not report_path.is_file():
-            active_log = Path(os.environ.get("LOCALAPPDATA", "")) / "ArcheTexture" / "launcher.log"
+            active_log = isolated_state / "launcher.log"
             log_copy = report_root / f"{index:02d}-launcher.log"
             if active_log.is_file():
                 shutil.copyfile(active_log, log_copy)
@@ -84,7 +119,7 @@ def main() -> int:
             continue
         result = json.loads(report_path.read_text(encoding="utf-8"))
         if "result" not in result:
-            active_log = Path(os.environ.get("LOCALAPPDATA", "")) / "ArcheTexture" / "launcher.log"
+            active_log = isolated_state / "launcher.log"
             log_copy = report_root / f"{index:02d}-launcher.log"
             if active_log.is_file():
                 shutil.copyfile(active_log, log_copy)
@@ -138,7 +173,7 @@ def main() -> int:
                     f"(mean framebuffer difference {difference:.2f})"
                 )
 
-    summary_path = evidence_dir / "atx26-native-summary.json"
+    summary_path = evidence_dir / "atx27-native-summary.json"
     summary_path.write_text(
         json.dumps(
             {
@@ -153,7 +188,6 @@ def main() -> int:
     if failures:
         raise RuntimeError(f"Native acceptance failures: {failures}; report: {summary_path}")
     print(f"All {len(results)} native Windows cases passed; report: {summary_path}")
-    shutil.rmtree(report_root, ignore_errors=True)
     return 0
 
 

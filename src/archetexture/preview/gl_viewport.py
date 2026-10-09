@@ -11,6 +11,7 @@ from PySide6.QtOpenGL import (
     QOpenGLVertexArrayObject,
 )
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtWidgets import QApplication
 
 from archetexture.preview.camera import CameraState
 from archetexture.preview.mesh import generate_mesh
@@ -487,6 +488,19 @@ class MaterialGLViewport(QOpenGLWidget):
         self._last_mouse = None
 
     def wheelEvent(self, event):
+        global_position = event.globalPosition().toPoint()
+        local_position = self.mapFromGlobal(global_position)
+        if not self.rect().contains(local_position):
+            event.ignore()
+            return
+        pointed_widget = QApplication.widgetAt(global_position)
+        if (
+            pointed_widget is not None
+            and pointed_widget is not self
+            and not self.isAncestorOf(pointed_widget)
+        ):
+            event.ignore()
+            return
         self.camera.zoom(event.angleDelta().y() / 120.0)
         self.update()
         self.viewChanged.emit()

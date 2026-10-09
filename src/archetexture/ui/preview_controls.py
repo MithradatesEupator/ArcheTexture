@@ -55,9 +55,7 @@ class PreviewControls(QWidget):
         self.fov.setRange(15, 90)
         self.fov.setValue(45)
         self.view = QComboBox(self)
-        self.view.addItems(
-            ("Orbit", "Front", "Back", "Left", "Right", "Top", "Bottom", "Reset / Frame")
-        )
+        self.view.addItems(("Orbit", "Front", "Back", "Left", "Right", "Top", "Bottom"))
         self.lighting = QComboBox(self)
         self.lighting.addItems(LIGHTING_PRESETS)
         self.rig_rotation = self._spin(-180, 180, 1, 0)
@@ -114,6 +112,7 @@ class PreviewControls(QWidget):
             ("Clip Threshold", self.clip),
             ("Auto-rotate Speed", self.auto_speed),
         )
+        form.addRow("Inspection Mode", self.mode)
         for title, widget in controls:
             form.addRow(title, widget)
         for widget in (self.wire, self.cull, self.auto_rotate):

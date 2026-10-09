@@ -249,7 +249,8 @@ def test_preview_preferences_and_mode_switch_do_not_dirty_document(qtbot, tmp_pa
     assert state() == before
     assert window.preview_viewport.mesh_type == "Cube"
     assert window.preview_mode_combo.currentText() == "Material"
-    assert not window.preview_mode_label.isHidden()
+    assert window.preview_mode_indicator.text() == "MATERIAL PREVIEW"
+    assert not window.preview_mode_indicator.isHidden()
     assert window.output_selector.objectName() == "material-output-selector"
     window.workspace_mode_combo.setCurrentIndex(0)
     assert window.workspace_stack.currentWidget() is window.viewport
