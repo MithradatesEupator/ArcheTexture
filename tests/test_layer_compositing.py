@@ -55,8 +55,8 @@ def test_all_supported_blends_and_opacity_use_float32_source_over():
 def test_default_document_visibly_combines_two_procedural_layers():
     recipe = default_recipe()
     assert len(recipe.layers) >= 2
-    assert recipe.layers[0].source.operation_id == "generator.fractal_noise"
-    assert recipe.layers[1].source.operation_id == "generator.cellular"
+    assert recipe.layers[0].source.operation_id == "generator.seamless_fractal_noise"
+    assert recipe.layers[1].source.operation_id == "generator.seamless_cellular"
     full = RenderEngine().render(recipe).rgba_field
     recipe.layers[1].enabled = False
     noise_only = RenderEngine().render(recipe).rgba_field

@@ -116,7 +116,8 @@ class LayersPanel(QWidget):
         self.mask_combo.setObjectName("layer-mask-control")
         self.mask_combo.addItem("No mask", None)
         self.mask_combo.currentIndexChanged.connect(self._mask_changed)
-        layout.addWidget(QLabel("LAYER MASK"))
+        self.mask_title = QLabel("LAYER MASK")
+        layout.addWidget(self.mask_title)
         layout.addWidget(self.mask_combo)
         mask_buttons = QVBoxLayout()
         mask_actions = QHBoxLayout()
@@ -140,6 +141,24 @@ class LayersPanel(QWidget):
         self.open_mask_button.clicked.connect(self._open_mask)
         self.clear_mask_button.clicked.connect(lambda: self._set_mask(None))
         self.setMinimumWidth(230)
+        self._simple_mode = False
+
+    def set_simple_mode(self, simple: bool) -> None:
+        self._simple_mode = simple
+        self.more_layer_actions.setVisible(not simple)
+        self.blend.setVisible(not simple)
+        self.mask_combo.setVisible(not simple)
+        self.mask_title.setVisible(not simple)
+        for button in (
+            self.add_mask_button,
+            self.add_image_mask_button,
+            self.edit_mask_button,
+            self.open_mask_button,
+            self.clear_mask_button,
+        ):
+            button.setVisible(not simple)
+        # The mask heading and action rows share a parent layout; keep their
+        # controls available only from the Advanced editor.
 
     def set_recipe(
         self, recipe: ProjectRecipe, selected_id: str | None, output_id: str | None = None

@@ -298,7 +298,8 @@ def test_material_starters_validate_and_render_coherent_live_channels(starter):
     assert normal.layers[0].transforms[0].operation_id == "transform.height_to_normal"
     assert "Scale" in {
         value.source_id
-        for value in height.layers[0].source.parameters.values()
+        for instance in [height.layers[0].source, *height.layers[0].transforms]
+        for value in instance.parameters.values()
         if isinstance(value, ControlFieldBinding)
     }
     assert any(

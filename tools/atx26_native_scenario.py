@@ -5,20 +5,29 @@ import ctypes
 import json
 import os
 import time
+import traceback
 import uuid
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPoint, QPointF, Qt
-from PySide6.QtGui import QImage, QWheelEvent
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QCursor, QImage, QWheelEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QPushButton,
+    QSpinBox,
+    QToolTip,
+)
 
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.defaults import default_recipe
 from archetexture.core.material_starters import create_material_starter
 from archetexture.core.recipe import OperationInstance
 from archetexture.core.registry import REGISTRY
+from archetexture.core.seamlessness import measure_tileability
 from archetexture.core.serialization import load_project, save_project
 from archetexture.preview import gl_viewport
 from archetexture.preview.snapshot import PreviewMaterialSnapshot
@@ -63,6 +72,7 @@ def _render_preview(window: MainWindow):
             window.preview_viewport.snapshot is not None
             and window.preview_viewport.snapshot.request_id >= request_id
         ),
+        timeout=90,
         message=f"preview request {request_id} did not finish",
     )
     window.preview_viewport.update()
@@ -252,6 +262,54 @@ def _diagnose_sampling(window: MainWindow, evidence_dir: Path) -> dict[str, obje
         for name in ("tileU", "tileV", "mode", "baseMap")
     }
 
+    periodic = np.empty_like(synthetic)
+    periodic[..., 0] = np.sin(2 * np.pi * x / (size - 1)) * 0.5 + 0.5
+    periodic[..., 1] = np.cos(2 * np.pi * y / (size - 1)) * 0.5 + 0.5
+    periodic[..., 2] = np.sin(2 * np.pi * (x + y) / (size - 1)) * 0.5 + 0.5
+    periodic[..., 3] = 1.0
+    periodic_snapshot = PreviewMaterialSnapshot(
+        synthetic_snapshot.request_id + 1,
+        {**maps, "base_color": periodic},
+        synthetic_snapshot.resolved_output_ids,
+        size,
+        size,
+    )
+    periodic_ok, periodic_edge, periodic_interior = measure_tileability(periodic)
+    assert periodic_ok, "known-periodic synthetic map failed the CPU edge test"
+    original_camera_angles = (viewport.camera.yaw, viewport.camera.pitch)
+    viewport.camera.yaw = 90.0
+    viewport.camera.pitch = 0.0
+    viewport.set_snapshot(periodic_snapshot)
+    viewport.inspection = "Base Color"
+    periodic_image, periodic_raw = _capture_preview_frame(window)
+    periodic_image.save(str(evidence_dir / "atx26-diagnostic-periodic-sphere.png"))
+    center = periodic_raw.shape[1] // 2
+    seam_slice = periodic_raw[
+        periodic_raw.shape[0] // 4 : 3 * periodic_raw.shape[0] // 4,
+        max(0, center - 4) : center + 5,
+        :3,
+    ].astype(np.float32)
+    seam_jump = float(np.abs(seam_slice[:, 4] - seam_slice[:, 3]).mean())
+    neighboring_jump = (
+        float(
+            np.abs(seam_slice[:, 3] - seam_slice[:, 2]).mean()
+            + np.abs(seam_slice[:, 5] - seam_slice[:, 6]).mean()
+        )
+        / 2
+    )
+    assert seam_jump <= max(neighboring_jump * 3.0, 18.0), (
+        f"periodic synthetic sphere shows an anomalous UV seam: "
+        f"{seam_jump:.2f} vs {neighboring_jump:.2f} neighboring gradient"
+    )
+    synthetic_metrics["periodic_sphere"] = {
+        "cpu_edge_gradient": periodic_edge,
+        "cpu_interior_gradient": periodic_interior,
+        "center_seam_gradient": seam_jump,
+        "neighbor_gradient": neighboring_jump,
+        "native_frame_stddev": float(periodic_raw[..., :3].astype(np.float32).std()),
+    }
+    viewport.camera.yaw, viewport.camera.pitch = original_camera_angles
+
     viewport.inspection = "UV Checker"
     checker_image, checker_raw = _capture_preview_frame(window)
     checker_image.save(str(evidence_dir / "atx26-diagnostic-uv-checker.png"))
@@ -304,8 +362,9 @@ def _edit_height_source(recipe) -> None:
 
 
 def _select_pipeline_context(window: MainWindow) -> None:
+    window.authoring_mode_combo.setCurrentIndex(1)
     window.right_tabs.setCurrentIndex(1)
-    window.advanced_tabs.setCurrentWidget(window.control_fields_editor)
+    window.advanced_tabs.setCurrentWidget(window.control_fields_scroll)
     height_output = next(
         item for item in window.document.recipe.outputs if item.semantic == "height"
     )
@@ -377,18 +436,52 @@ def _wheel_event(local: QPoint, global_position: QPoint) -> QWheelEvent:
 
 def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
     panel = window.simple_material_panel
-    assert window.right_tabs.currentIndex() == 0
+    assert window.authoring_mode_combo.currentIndex() == 0
     assert window.output_selector.isHidden()
     assert window.preview_controls.mesh.currentText() == "UV Sphere"
     assert window.preview_controls.quality.currentText() == "High"
     assert window.preview_controls.mode.currentText() == "Material"
+    view = window.preview_viewport
+    panel_origin = panel.mapTo(window.left_authoring_scroll, QPoint(0, 0))
+    layers_origin = window.layers_panel.mapTo(window.left_authoring_scroll, QPoint(0, 0))
+    assert abs(panel_origin.x() - layers_origin.x()) <= 2
+    assert layers_origin.y() >= panel_origin.y() + panel.height() - 4
+
+    def viewport_state():
+        camera = view.camera
+        return (
+            camera.distance,
+            camera.fov,
+            camera.projection,
+            tuple(camera.target),
+            camera.yaw,
+            camera.pitch,
+            window.workspace_stack.size().width(),
+            window.workspace_stack.size().height(),
+            view.size().width(),
+            view.size().height(),
+            tuple(window.centralWidget().sizes()),
+        )
+
+    stable_viewport = viewport_state()
     if window.document.recipe.control_fields:
         assert set(panel.control_spins) >= {"Scale", "Wear"}
+
+    tip = panel.tileability
+    tip_position = tip.mapToGlobal(tip.rect().center())
+    QCursor.setPos(tip_position)
+    QTest.mouseMove(tip, tip.rect().center())
+    QApplication.sendEvent(tip, QEvent(QEvent.Type.Enter))
+    QTest.qWait(window._delayed_help._delay_ms + 150)
+    delayed_help_shown = QToolTip.isVisible()
+    QToolTip.hideText()
+    assert delayed_help_shown, "registered tileability help did not appear after its delay"
 
     for semantic, _label in panel.CHANNELS:
         panel.channel_buttons[semantic].click()
         assert window._selected_output().semantic == semantic
         assert window.layers_panel.layer_list.count() > 0
+        assert viewport_state() == stable_viewport
     panel.channel_buttons["base_color"].click()
     assert window.layers_panel.pipeline_descriptor.text().startswith("Color — ")
 
@@ -401,11 +494,13 @@ def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
         target_scale = min(scale.maximum(), max(scale.minimum(), start_scale * 1.65))
         if target_scale == start_scale:
             target_scale = min(scale.maximum(), start_scale + 0.5)
+        expected_scale = round(target_scale, scale.decimals())
         scale.setValue(target_scale)
+        assert viewport_state() == stable_viewport
         applied_scale = window.document.recipe.control_fields["Scale"].source.parameters[
             panel.control_targets["Scale"][1]
         ]
-        assert abs(float(applied_scale) - target_scale) < 0.001
+        assert abs(float(applied_scale) - expected_scale) < 0.001
         _after_control, after_raw, _snapshot = _render_preview(window)
         scale_difference = _image_difference(before_raw, after_raw)
         assert scale_difference > 0.05, "Simple Scale control did not update the material preview"
@@ -423,7 +518,11 @@ def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
     state_index = window.document.history.index
     state_dirty = window.document.dirty
     for index in (1, 0, 1, 0):
-        window.right_tabs.setCurrentIndex(index)
+        window.authoring_mode_combo.setCurrentIndex(index)
+        assert viewport_state() == stable_viewport, (
+            f"authoring mode {index} changed viewport state: "
+            f"before={stable_viewport!r} after={viewport_state()!r}"
+        )
         assert window.document.recipe == state_recipe
         assert window.document.history.entries == state_history
         assert window.document.history.index == state_index
@@ -434,11 +533,10 @@ def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
             window._selected_instance_id,
         ) == selection
     assert window.output_selector.isHidden()
-    window.right_tabs.setCurrentIndex(1)
+    window.authoring_mode_combo.setCurrentIndex(1)
     window.advanced_tabs.setCurrentWidget(window.preview_controls_scroll)
     assert not window.output_selector.isHidden()
 
-    view = window.preview_viewport
     start_distance = view.camera.distance
     combo = window.preview_controls.view
     combo_position = combo.rect().center()
@@ -485,7 +583,7 @@ def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
     # Confirm the narrow right inspector remains scrollable at a compact common window size.
     window.resize(920, 640)
     window.show()
-    window.right_tabs.setCurrentIndex(1)
+    window.authoring_mode_combo.setCurrentIndex(1)
     window.advanced_tabs.setCurrentWidget(window.preview_controls_scroll)
     QApplication.processEvents()
     scroll_bar = window.preview_controls_scroll.verticalScrollBar()
@@ -493,7 +591,7 @@ def _exercise_simple_workflow(window: MainWindow) -> dict[str, object]:
     window.preview_controls_scroll.ensureWidgetVisible(window.preview_controls.reset)
     QApplication.processEvents()
     assert scroll_bar.value() == scroll_bar.maximum()
-    window.right_tabs.setCurrentIndex(0)
+    window.authoring_mode_combo.setCurrentIndex(0)
     window.resize(1560, 980)
     window.preview_controls.mode.setCurrentText("Material")
     return {
@@ -520,15 +618,64 @@ def main() -> int:
     )
     app = QApplication.instance() or QApplication([])
     window = MainWindow(recipe)
+    preview_trace_path = report_path.with_suffix(".preview.log")
+    preview_build = window.preview_builder.build
+    preview_complete = window._on_preview_complete
+
+    def trace_preview_complete(outcome):
+        request_id, snapshot, error, signature = outcome
+        with preview_trace_path.open("a", encoding="utf-8") as stream:
+            stream.write(
+                f"complete request={request_id} size={getattr(snapshot, 'width', None)} "
+                f"current={window._preview_request_id} "
+                f"signature_matches={signature == window._latest_preview_signature} "
+                f"error={error!r}\n"
+            )
+        preview_complete(outcome)
+
+    window._preview_bridge.completed.disconnect(window._on_preview_complete)
+    window._preview_bridge.completed.connect(
+        trace_preview_complete, Qt.ConnectionType.QueuedConnection
+    )
+
+    def trace_preview_build(*args, **kwargs):
+        request_id, width, height = args[2], args[3], args[4]
+        with preview_trace_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"start request={request_id} size={width}x{height} time={time.time()}\n")
+        try:
+            result = preview_build(*args, **kwargs)
+        except Exception:
+            with preview_trace_path.open("a", encoding="utf-8") as stream:
+                stream.write(traceback.format_exc() + "\n")
+            raise
+        with preview_trace_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"done request={request_id} size={width}x{height} time={time.time()}\n")
+        return result
+
+    window.preview_builder.build = trace_preview_build
     window._confirm_discard = lambda: True
     window.resize(1560, 980)
     window.show()
     _wait_until(lambda: window.isVisible(), message="main window did not appear")
     assert app.platformName().lower() in {"windows", "windows:fonts"}, app.platformName()
     window._reset_preview()
+    QApplication.processEvents()
+    authoring_widgets = (
+        window.left_authoring_scroll.findChildren(QPushButton)
+        + window.left_authoring_scroll.findChildren(QComboBox)
+        + window.left_authoring_scroll.findChildren(QSpinBox)
+        + window.left_authoring_scroll.findChildren(QDoubleSpinBox)
+    )
+    clipped_controls = [
+        f"{widget.objectName() or widget.text()}: {widget.width()} < "
+        f"{widget.minimumSizeHint().width()}"
+        for widget in authoring_widgets
+        if widget.isVisible() and widget.width() + 4 < widget.minimumSizeHint().width()
+    ]
+    assert not clipped_controls, f"left authoring controls are clipped: {clipped_controls}"
 
     window.preview_controls.resolution.setCurrentIndex(
-        window.preview_controls.resolution.findData(128)
+        window.preview_controls.resolution.findData(None)
     )
     window.preview_controls.mesh.setCurrentText("UV Sphere")
     window.preview_controls.quality.setCurrentText("High")
@@ -543,11 +690,38 @@ def main() -> int:
     assert window.preview_viewport.quality == "High"
     assert window.preview_viewport.inspection == "Material"
     _wait_until(
-        lambda: window.preview_viewport.snapshot is not None,
+        lambda: (
+            window.preview_viewport.snapshot is not None
+            and window.preview_viewport.snapshot.width == 512
+        ),
         timeout=60,
-        message="initial material snapshot did not arrive for native diagnostics",
+        message=(
+            "quick Auto preview did not arrive at 512 px; "
+            f"snapshot={getattr(window.preview_viewport.snapshot, 'width', None)}, "
+            f"request={window._preview_request_id}, "
+            f"renders={window.preview_builder.rendered_outputs}, "
+            f"status={window.statusBar().currentMessage()!r}, "
+            f"error={window.preview_unavailable_label.text()!r}"
+        ),
+    )
+    auto_resolution = window._auto_preview_resolution()
+    _wait_until(
+        lambda: (
+            window.preview_viewport.snapshot is not None
+            and window.preview_viewport.snapshot.width >= auto_resolution
+        ),
+        timeout=120,
+        message=(
+            "Auto preview did not refine to its viewport-matched resolution; "
+            f"expected_at_least={auto_resolution}, "
+            f"actual={getattr(window.preview_viewport.snapshot, 'width', None)}"
+        ),
     )
     simple_metrics = _exercise_simple_workflow(window)
+    window.preview_controls.resolution.setCurrentIndex(
+        window.preview_controls.resolution.findData(512)
+    )
+    window._preview_refine_timer.stop()
     diagnostic_metrics = _diagnose_sampling(window, evidence_dir)
     report_path.write_text(json.dumps({"sampling_diagnostics": diagnostic_metrics}, indent=2))
     print(f"ATX26 native sampling diagnostics: {json.dumps(diagnostic_metrics)}", flush=True)
@@ -559,7 +733,14 @@ def main() -> int:
             window.preview_viewport.snapshot is not None
             and window.preview_viewport.snapshot.request_id >= restored_request_id
         ),
-        message="material preview did not recover after diagnostic snapshot",
+        message=(
+            "material preview did not recover after diagnostic snapshot; "
+            f"snapshot={getattr(window.preview_viewport.snapshot, 'request_id', None)}, "
+            f"request={window._preview_request_id}, "
+            f"renders={window.preview_builder.rendered_outputs}, "
+            f"status={window.statusBar().currentMessage()!r}, "
+            f"error={window.preview_unavailable_label.text()!r}"
+        ),
     )
     window.preview_controls.mode.setCurrentText("Material")
     material_image, material_raw, original_snapshot = _render_preview(window)

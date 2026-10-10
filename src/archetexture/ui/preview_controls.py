@@ -41,14 +41,17 @@ class PreviewControls(QWidget):
         self.mode.addItems(INSPECTION_MODES)
         self.resolution = QComboBox(self)
         for label, value in (
-            ("128", 128),
-            ("256", 256),
+            ("Auto (recommended)", None),
             ("512", 512),
             ("1024", 1024),
+            ("2048", 2048),
             ("Project Resolution", 0),
         ):
             self.resolution.addItem(label, value)
-        self.resolution.setCurrentIndex(2)
+        self.resolution.setCurrentIndex(0)
+        self.resolution.setToolTip(
+            "Auto follows the viewport pixel size and refines after editing settles."
+        )
         self.projection = QComboBox(self)
         self.projection.addItems(("Perspective", "Orthographic"))
         self.fov = QSpinBox(self)

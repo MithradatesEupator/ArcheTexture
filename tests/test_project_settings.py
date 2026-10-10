@@ -11,7 +11,13 @@ from PySide6.QtWidgets import QDialog
 
 from archetexture.core.defaults import default_recipe
 from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
-from archetexture.core.recipe import ControlFieldRecipe, OperationInstance, ProjectRecipe
+from archetexture.core.recipe import (
+    ControlFieldRecipe,
+    LayerRecipe,
+    OperationInstance,
+    ProjectRecipe,
+)
+from archetexture.core.registry import REGISTRY
 from archetexture.core.sampling import sample_periodic_value_noise_at
 from archetexture.core.serialization import load_project, save_project
 from archetexture.core.validation import (
@@ -244,6 +250,13 @@ def test_control_field_modulation_evaluates_at_resized_dimensions():
     recipe.control_fields["resize-mask"] = ControlFieldRecipe(
         OperationInstance("resize-mask-source", "generator.constant", 1, parameters={"value": 0.5})
     )
+    source_definition = REGISTRY.get("generator.fractal_noise")
+    recipe.layers[0].source = OperationInstance(
+        "modulated-source",
+        source_definition.identifier,
+        source_definition.version,
+        parameters={spec.identifier: spec.default for spec in source_definition.parameter_specs},
+    )
     recipe.layers[0].source.parameters["scale"] = ControlFieldBinding(
         "resize-mask", ControlFieldMapping(output_min=1.0, output_max=4.0)
     )
@@ -258,14 +271,23 @@ def test_seamless_generator_keeps_lattice_period_when_project_resolution_changes
         height=512,
         seed=31,
         layers=[
-            copy.deepcopy(default_recipe().layers[0]),
+            LayerRecipe(
+                "seamless-layer",
+                "Layer 1",
+                OperationInstance(
+                    "seamless-source",
+                    "generator.seamless_value_noise",
+                    1,
+                    parameters={
+                        "seed": 5,
+                        "cells_x": 8,
+                        "cells_y": 6,
+                        "offset_x": 0.0,
+                        "offset_y": 0.0,
+                    },
+                ),
+            ),
         ],
-    )
-    recipe.layers[0].source = OperationInstance(
-        "seamless-source",
-        "generator.seamless_value_noise",
-        1,
-        parameters={"seed": 5, "cells_x": 8, "cells_y": 6, "offset_x": 0.0, "offset_y": 0.0},
     )
     low = RenderEngine().render(recipe, width=32, height=24).scalar_field
     recipe.width, recipe.height = 64, 48

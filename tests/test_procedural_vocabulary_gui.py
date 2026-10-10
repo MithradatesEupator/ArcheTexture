@@ -20,6 +20,7 @@ def test_vocabulary_widgets_build_save_reload_export_and_undo_stack(qtbot, tmp_p
     recipe = default_recipe()
     recipe.width, recipe.height = 48, 32
     window = MainWindow(recipe)
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
 

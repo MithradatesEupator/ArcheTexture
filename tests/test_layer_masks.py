@@ -272,14 +272,14 @@ def test_seamlessness_accounts_for_layer_mask():
 
 def test_gui_add_mask_selects_field_and_exposes_preview_and_navigation(qtbot):
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     window.layers_panel.add_mask_button.click()
     layer = window._layer()
     assert layer.mask is not None
     assert layer.mask.source_id in window.document.recipe.control_fields
-    assert window.right_tabs.currentWidget() is window.advanced_tabs
-    assert window.advanced_tabs.currentWidget() is window.control_fields_editor
+    assert window.right_tabs.currentWidget() is window.control_fields_scroll
     assert window.control_fields_editor.selected_field_id == layer.mask.source_id
     assert window.viewport_mode_combo.findData("mask_preview") >= 0
     window.layers_panel.open_mask_button.click()
@@ -306,6 +306,7 @@ def test_control_field_rename_updates_mask_and_referenced_delete_is_blocked(qtbo
     from archetexture.ui import main_window as main_window_module
 
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     window.layers_panel.add_mask_button.click()

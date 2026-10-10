@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from PySide6.QtGui import QGuiApplication
 
 from archetexture.core.defaults import default_recipe
 from archetexture.preview.bindings import PreviewMaterialBinding
@@ -280,6 +281,8 @@ def test_preview_gl_failure_shows_message_and_keeps_2d_workspace(qtbot):
 
 
 def test_native_gl_preview_pixels_and_view_changes_when_available(qtbot, tmp_path):
+    if QGuiApplication.platformName() == "offscreen":
+        pytest.skip("native OpenGL framebuffer assertions require a desktop Qt platform")
     widget = MaterialGLViewport()
     qtbot.addWidget(widget)
     widget.resize(640, 480)

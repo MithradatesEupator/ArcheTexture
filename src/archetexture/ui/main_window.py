@@ -7,7 +7,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Qt, Signal
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QSpacerItem,
     QSplitter,
     QStyleFactory,
     QTabWidget,
@@ -32,6 +34,7 @@ from archetexture import __version__
 from archetexture.color.ramp import ColorRamp
 from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.document import DocumentController
+from archetexture.core.fingerprinting import structural_fingerprint
 from archetexture.core.material_starters import create_material_starter
 from archetexture.core.operations import OperationType
 from archetexture.core.parameters import (
@@ -49,7 +52,7 @@ from archetexture.core.recipe import (
     ProjectRecipe,
 )
 from archetexture.core.registry import REGISTRY
-from archetexture.core.seamlessness import recipe_seamlessness
+from archetexture.core.seamlessness import measure_tileability, recipe_seamlessness
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.coordinator import ExportCoordinator, ExportOutcome
 from archetexture.export.image_export import ImageExporter
@@ -62,6 +65,7 @@ from archetexture.render.session import RenderSession
 from archetexture.ui.binding_dialog import BindingDialog
 from archetexture.ui.color_ramp_editor import ColorRampEditor
 from archetexture.ui.control_fields_editor import ControlFieldsEditor
+from archetexture.ui.delayed_help import DelayedHelp
 from archetexture.ui.export_image_dialog import ExportImageDialog
 from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.layers_panel import LayersPanel
@@ -101,11 +105,22 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._export_status_text: str | None = None
         self._latest_render_result = None
+        self._latest_render_output_id: str | None = None
+        self._rendering_output_id: str | None = None
         self._latest_displayed_request_id: int | None = None
         self.preview_binding = PreviewMaterialBinding()
         self._preview_request_id = 0
+        self._latest_preview_signature: str | None = None
+        self._preview_futures = set()
+        self._preview_refine_timer = QTimer(self)
+        self._preview_refine_timer.setSingleShot(True)
+        self._preview_refine_timer.setInterval(450)
+        self._preview_refine_timer.timeout.connect(lambda: self._request_preview(final=True))
         self._preview_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="archetexture-preview"
+        )
+        self._preview_refine_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="archetexture-preview-refine"
         )
         self.render_session = RenderSession()
         render_engine = RenderEngine(session=self.render_session)
@@ -187,6 +202,7 @@ class MainWindow(QMainWindow):
         self.layers_panel.moveToOutputRequested.connect(self._move_layer_to_output)
         self.layers_panel.createOutputRequested.connect(self._create_output_from_layer)
         self.simple_material_panel.channelSelected.connect(self._select_simple_channel)
+        self.simple_material_panel.sourceSelected.connect(self._source_changed)
         self.simple_material_panel.controlParameterChanged.connect(self._simple_control_changed)
 
         center_panel = QWidget(self)
@@ -242,6 +258,7 @@ class MainWindow(QMainWindow):
             "Conservative status for enabled, visible layer sources and transforms."
         )
         view_row.addWidget(self.seamlessness_label)
+        view_row.addItem(QSpacerItem(0, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))
         view_row.addStretch(1)
         center_layout.addLayout(view_row)
         self.context_breadcrumb = QLabel(center_panel)
@@ -266,52 +283,55 @@ class MainWindow(QMainWindow):
         center_layout.addWidget(self.color_ramp_editor, 0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        left_panel = QWidget(self)
-        left_layout = QVBoxLayout(left_panel)
+        left_content = QWidget(self)
+        left_layout = QVBoxLayout(left_content)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(self.simple_material_panel.channel_widget, 0)
-        left_layout.addWidget(self.layers_panel, 1)
-        left_layout.addWidget(self.pipeline_panel, 1)
-        splitter.addWidget(left_panel)
+        self.authoring_mode_combo = QComboBox(left_content)
+        self.authoring_mode_combo.setObjectName("authoring-mode-selector")
+        self.authoring_mode_combo.addItems(("Simple Editor", "Advanced Editor"))
+        left_layout.addWidget(self.authoring_mode_combo)
+        left_layout.addWidget(self.simple_material_panel, 0)
+        left_layout.addWidget(self.layers_panel, 2)
+        self.property_editor_scroll = QScrollArea(left_content)
+        self.property_editor_scroll.setWidgetResizable(True)
+        self.property_editor_scroll.setWidget(self.property_editor)
+        self.property_editor_scroll.setMinimumHeight(100)
+        left_layout.addWidget(self.property_editor_scroll, 2)
+        left_layout.addWidget(self.pipeline_panel, 2)
+        self.left_authoring_scroll = QScrollArea(self)
+        self.left_authoring_scroll.setWidgetResizable(True)
+        self.left_authoring_scroll.setFixedWidth(330)
+        self.left_authoring_scroll.setWidget(left_content)
+        splitter.addWidget(self.left_authoring_scroll)
         splitter.addWidget(center_panel)
         self.right_tabs = QTabWidget(self)
-        self.simple_controls_scroll = QScrollArea(self)
-        self.simple_controls_scroll.setWidgetResizable(True)
-        self.simple_controls_scroll.setWidget(self.simple_material_panel.controls_widget)
-        self.right_tabs.addTab(self.simple_controls_scroll, "Simple")
-        self.advanced_tabs = QTabWidget(self)
-        self.advanced_tabs.setObjectName("advanced-inspector-tabs")
-        self.advanced_tabs.addTab(self.control_fields_editor, "Control Fields")
-        self.advanced_tabs.setTabToolTip(
-            0,
-            "Reusable value fields that drive layer parameters, masks, and derived outputs.",
-        )
+        self.right_tabs.setObjectName("right-side-tabs")
         self.preview_controls_scroll = QScrollArea(self)
         self.preview_controls_scroll.setWidgetResizable(True)
         self.preview_controls_scroll.setWidget(self.preview_controls)
-        self.advanced_tabs.addTab(self.preview_controls_scroll, "View Settings")
-        self.right_tabs.addTab(self.advanced_tabs, "Advanced")
-        self.right_tabs.setObjectName("right-side-tabs")
+        self.right_tabs.addTab(self.preview_controls_scroll, "View Settings")
+        self.control_fields_scroll = QScrollArea(self)
+        self.control_fields_scroll.setWidgetResizable(True)
+        self.control_fields_scroll.setWidget(self.control_fields_editor)
+        self.right_tabs.addTab(self.control_fields_scroll, "Advanced Tools")
+        self.right_tabs.setTabToolTip(
+            1,
+            "Control Fields drive layer parameters, masks, and derived outputs.",
+        )
+        # Keep the existing name for integrations that select the advanced tool page.
+        self.advanced_tabs = self.right_tabs
         self.right_tabs.setCurrentIndex(0)
-        self.right_tabs.setMinimumWidth(285)
-        self.right_tabs.currentChanged.connect(self._authoring_mode_changed)
-        self.inspector_splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self.property_editor_scroll = QScrollArea(self)
-        self.property_editor_scroll.setWidgetResizable(True)
-        self.property_editor_scroll.setWidget(self.property_editor)
-        self.property_editor_scroll.setMinimumWidth(270)
-        self.inspector_splitter.addWidget(self.property_editor_scroll)
-        self.inspector_splitter.addWidget(self.right_tabs)
-        self.inspector_splitter.setStretchFactor(0, 3)
-        self.inspector_splitter.setStretchFactor(1, 2)
-        self.inspector_splitter.setSizes([470, 340])
-        splitter.addWidget(self.inspector_splitter)
+        self.right_tabs.setMinimumWidth(305)
+        self.right_tabs.setFixedWidth(310)
+        splitter.addWidget(self.right_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([250, 820, 300])
+        splitter.setSizes([330, 740, 310])
+        splitter.setMinimumSize(980, 560)
         self.setCentralWidget(splitter)
         self.workspace_mode_combo.currentIndexChanged.connect(self._workspace_mode_changed)
+        self.authoring_mode_combo.currentIndexChanged.connect(self._authoring_mode_changed)
         self.preview_controls.set_recipe(self.document.recipe, self.preview_binding)
         self._restore_preview_settings()
         self.preview_controls.settingChanged.connect(self._preview_control_changed)
@@ -326,7 +346,102 @@ class MainWindow(QMainWindow):
         self._selected_instance_id = self._layer().source.instance_id
         self._configure_theme()
         self._refresh_document(request_render=True)
-        self._authoring_mode_changed(self.right_tabs.currentIndex())
+        self._authoring_mode_changed(self.authoring_mode_combo.currentIndex())
+        self._delayed_help = DelayedHelp(self)
+        self._register_delayed_help()
+
+    def _register_delayed_help(self) -> None:
+        for semantic, text in {
+            "base_color": "Choose the color layers that make up the material's visible color.",
+            "normal": "Edit height and detail layers that shape the surface lighting.",
+            "roughness": (
+                "Choose how broadly light reflects from the surface. Higher values look rougher."
+            ),
+            "metallic": "Set how metallic the surface appears and how it reflects its environment.",
+        }.items():
+            self._delayed_help.register(self.simple_material_panel.channel_buttons[semantic], text)
+        for widget, text in (
+            (
+                self.layers_panel.layer_list,
+                "Select, enable, rename, and reorder layers for this material property.",
+            ),
+            (
+                self.simple_material_panel.source_selector,
+                "Choose a common generator or image for the selected layer.",
+            ),
+            (
+                self.layers_panel.opacity,
+                "Adjust this layer's contribution without changing its source.",
+            ),
+            (
+                self.pipeline_panel.source_selector,
+                "Choose the generator or image that supplies this layer's starting values.",
+            ),
+            (
+                self.pipeline_panel.transform_list,
+                "Transforms modify the source in order, from top to bottom.",
+            ),
+            (self.layers_panel.blend, "Choose how this layer combines with the layers below it."),
+            (self.layers_panel.mask_combo, "A mask controls where this layer contributes."),
+            (self.color_ramp_editor, "Map a scalar source such as height into colors."),
+            (
+                self.control_fields_editor,
+                "Control Fields are reusable spatial values that can drive parameters.",
+            ),
+            (
+                self.preview_controls.mode,
+                "Choose which material map or derived view the viewport displays.",
+            ),
+            (
+                self.preview_controls.tile_u,
+                "Repeat the material horizontally on the preview object; "
+                "this affects preview only.",
+            ),
+            (
+                self.preview_controls.tile_v,
+                "Repeat the material vertically on the preview object; this affects preview only.",
+            ),
+            (
+                self.preview_controls.normal_strength,
+                "Scale the preview normal map's lighting effect; this affects preview only.",
+            ),
+            (
+                self.preview_controls.normal_convention,
+                "Choose whether the preview interprets the green normal channel as "
+                "OpenGL or DirectX.",
+            ),
+            (
+                self.preview_controls.lighting,
+                "Choose the preview lights. This changes the viewport, not the material maps.",
+            ),
+            (
+                self.preview_controls.exposure,
+                "Brighten or darken the preview display without changing exported maps.",
+            ),
+            (
+                self.simple_material_panel.tileability,
+                "Compare opposite image borders to estimate whether the map repeats "
+                "without a visible join.",
+            ),
+        ):
+            self._delayed_help.register(widget, text)
+        for descendant in self.color_ramp_editor.findChildren(QWidget):
+            self._delayed_help.register(
+                descendant, "Map values from a scalar source to editable colors."
+            )
+        for descendant in self.control_fields_editor.findChildren(QWidget):
+            if not descendant.property("delayedHelpText"):
+                self._delayed_help.register(
+                    descendant,
+                    "Control Fields are reusable spatial values that can drive parameters.",
+                )
+        for descendant in (
+            self.property_editor,
+            *self.property_editor.findChildren(QWidget),
+        ):
+            help_text = descendant.property("delayedHelpText")
+            if help_text:
+                self._delayed_help.register(descendant, str(help_text))
 
     def _create_actions(self) -> None:
         file_menu = self.menuBar().addMenu("&File")
@@ -470,6 +585,7 @@ class MainWindow(QMainWindow):
         self.viewport_mode_label.setVisible(not is_3d)
         self.viewport_mode_combo.setVisible(not is_3d)
         if not is_3d:
+            self._preview_refine_timer.stop()
             self._preview_request_id += 1
         self.workspace_stack.setCurrentIndex(
             (2 if self.preview_viewport._gl_error else 1) if is_3d else 0
@@ -484,7 +600,7 @@ class MainWindow(QMainWindow):
                 self.preview_controls.quality.currentText(),
             )
             self._update_preview_mode_indicator()
-            self._request_preview()
+            QTimer.singleShot(0, self._request_preview_when_ready)
         settings = self._theme_settings()
         settings.setValue("preview/workspace", "3D Material" if is_3d else "2D Texture")
         settings.sync()
@@ -492,15 +608,25 @@ class MainWindow(QMainWindow):
     def _authoring_mode_changed(self, index: int) -> None:
         simple = index == 0
         self.simple_material_panel.channel_widget.setVisible(simple)
+        self.simple_material_panel.controls_widget.setVisible(simple)
+        self.layers_panel.set_simple_mode(simple)
+        self.pipeline_panel.setVisible(not simple)
+        self.seamlessness_label.setVisible(not simple)
         self.edit_output_label.setVisible(not simple)
         self.output_selector.setVisible(not simple)
         self.manage_outputs_button.setVisible(not simple)
-        self.simple_material_panel.set_recipe(self.document.recipe, self._selected_output_id)
-        self._refresh_document(request_render=False, refresh_properties=False)
+        self.right_tabs.setCurrentIndex(0 if simple else 1)
+        self.property_editor.set_simple_mode(simple)
+        self.simple_material_panel.set_recipe(
+            self.document.recipe,
+            self._selected_output_id,
+            self._layer().source.operation_id,
+        )
+        self._refresh_document(request_render=False)
 
     def _show_control_fields(self) -> None:
-        self.right_tabs.setCurrentWidget(self.advanced_tabs)
-        self.advanced_tabs.setCurrentWidget(self.control_fields_editor)
+        self.authoring_mode_combo.setCurrentIndex(1)
+        self.right_tabs.setCurrentWidget(self.control_fields_scroll)
 
     def _select_simple_channel(self, semantic: str) -> None:
         outputs = SimpleMaterialPanel.outputs_for_semantic(self.document.recipe, semantic)
@@ -526,6 +652,9 @@ class MainWindow(QMainWindow):
         )
         if instance is None or instance.parameters.get(parameter_id) == value:
             return
+        current_value = instance.parameters.get(parameter_id)
+        if isinstance(current_value, int) and not isinstance(current_value, bool):
+            value = int(round(value))
         instance.parameters[parameter_id] = value
         self._commit_recipe(recipe, control_field_id=control_name)
 
@@ -706,7 +835,16 @@ class MainWindow(QMainWindow):
         if kind in {"mesh", "view"}:
             self.statusBar().showMessage("Preview updated", 1200)
 
-    def _request_preview(self) -> None:
+    def _auto_preview_resolution(self) -> int:
+        ratio = max(1.0, float(self.preview_viewport.devicePixelRatioF()))
+        pixels = max(self.preview_viewport.width(), self.preview_viewport.height()) * ratio
+        if pixels < 620:
+            return 512
+        if pixels < 1500:
+            return 1024
+        return 2048
+
+    def _request_preview(self, *, final: bool = False) -> None:
         if (
             self._closing
             or self.workspace_mode_combo.currentData() != "3D Material"
@@ -714,16 +852,53 @@ class MainWindow(QMainWindow):
         ):
             return
         state = self.preview_controls.view_state()
+        selected_resolution = state["resolution"]
+        if selected_resolution is None:
+            resolution = self._auto_preview_resolution()
+            if not final and resolution > 512:
+                self._preview_refine_timer.stop()
+                resolution = 512
+            else:
+                self._preview_refine_timer.stop()
+        else:
+            self._preview_refine_timer.stop()
+            resolution = selected_resolution or max(
+                self.document.recipe.width, self.document.recipe.height
+            )
+        self._submit_preview(resolution, state)
+
+    def _request_preview_when_ready(self) -> None:
+        if self._closing or self.workspace_mode_combo.currentData() != "3D Material":
+            return
+        if self.preview_viewport._gl_error:
+            return
+        if self.preview_viewport.available:
+            self._request_preview()
+            return
+        QTimer.singleShot(50, self._request_preview_when_ready)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if (
+            hasattr(self, "_preview_refine_timer")
+            and not self._closing
+            and self.workspace_mode_combo.currentData() == "3D Material"
+            and self.preview_viewport.snapshot is not None
+            and self.preview_controls.resolution.currentData() is None
+            and self.preview_viewport.snapshot.width < self._auto_preview_resolution()
+        ):
+            self._preview_refine_timer.start()
+
+    def _submit_preview(self, resolution: int, state: dict) -> None:
         self._preview_request_id += 1
         request_id = self._preview_request_id
         recipe = copy.deepcopy(self.document.recipe)
-        if state["resolution"]:
-            width = height = state["resolution"]
-        else:
-            width, height = recipe.width, recipe.height
+        width = height = resolution
         binding = copy.deepcopy(self.preview_binding)
         inspection = state["inspection"]
         project_path = self.document.project_path
+        signature = structural_fingerprint((recipe, binding, state), RenderContext(project_path))
+        self._latest_preview_signature = signature
 
         def render_snapshot():
             try:
@@ -736,23 +911,30 @@ class MainWindow(QMainWindow):
                     inspection=inspection,
                     render_context=RenderContext(project_path),
                 )
-                return request_id, result, None
+                return request_id, result, None, signature
             except Exception as exc:
-                return request_id, None, exc
+                return request_id, None, exc, signature
 
-        future = self._preview_executor.submit(render_snapshot)
-        future.add_done_callback(
-            lambda completed: (
+        for pending in tuple(self._preview_futures):
+            if not pending.running():
+                pending.cancel()
+        executor = self._preview_executor if resolution <= 512 else self._preview_refine_executor
+        future = executor.submit(render_snapshot)
+        self._preview_futures.add(future)
+
+        def preview_finished(completed) -> None:
+            self._preview_futures.discard(completed)
+            if not completed.cancelled() and not self._closing:
                 self._preview_bridge.completed.emit(completed.result())
-                if not completed.cancelled() and not self._closing
-                else None
-            )
-        )
-        self.statusBar().showMessage("Updating 3D material preview…")
+
+        future.add_done_callback(preview_finished)
+        self.statusBar().showMessage(f"Updating 3D material preview · {resolution}×{resolution}…")
 
     def _on_preview_complete(self, outcome) -> None:
-        request_id, snapshot, error = outcome
-        if self._closing or request_id != self._preview_request_id:
+        request_id, snapshot, error, signature = outcome
+        if self._closing or (
+            request_id != self._preview_request_id and signature != self._latest_preview_signature
+        ):
             return
         if error is not None:
             self.preview_unavailable_label.setText(f"Preview render failed: {error}")
@@ -760,6 +942,12 @@ class MainWindow(QMainWindow):
             return
         self.preview_viewport.set_snapshot(snapshot)
         self.statusBar().showMessage("3D preview ready", 2000)
+        if (
+            self.workspace_mode_combo.currentData() == "3D Material"
+            and self.preview_controls.resolution.currentData() is None
+            and snapshot.width < self._auto_preview_resolution()
+        ):
+            self._preview_refine_timer.start()
 
     def _save_preview_image(self, path: str) -> None:
         if not self.preview_viewport.save_preview_image(path):
@@ -882,11 +1070,12 @@ class MainWindow(QMainWindow):
             self._selected_instance_id = layer.source.instance_id if layer.source else None
         self.layers_panel.set_recipe(recipe, self._selected_layer_id, output.output_id)
         descriptor = self._layer_descriptor(layer)
-        if self.right_tabs.currentIndex() == 0:
+        if self.authoring_mode_combo.currentIndex() == 0:
             channel = dict(SimpleMaterialPanel.CHANNELS).get(output.semantic)
             if channel:
                 descriptor = f"{channel} — {descriptor}"
         self.layers_panel.set_pipeline_descriptor(descriptor)
+        self._update_tileability_status(output.output_id)
         source_name = REGISTRY.get(layer.source.operation_id).name
         transform = next(
             (item for item in layer.transforms if item.instance_id == self._selected_instance_id),
@@ -912,7 +1101,7 @@ class MainWindow(QMainWindow):
         self.property_editor.set_project_path(self.document.project_path)
         self.control_fields_editor.set_recipe(recipe, self._selected_control_field_id)
         self.preview_controls.set_recipe(recipe, self.preview_binding)
-        self.simple_material_panel.set_recipe(recipe, output.output_id)
+        self.simple_material_panel.set_recipe(recipe, output.output_id, layer.source.operation_id)
         self.control_fields_editor.property_editor.set_project_path(self.document.project_path)
         self._selected_control_field_id = self.control_fields_editor.selected_field_id
         self.color_ramp_editor.set_ramp(
@@ -931,6 +1120,39 @@ class MainWindow(QMainWindow):
         if request_render:
             self._request_render()
             self._request_preview()
+
+    def _update_tileability_status(self, output_id: str) -> None:
+        recipe_status = recipe_seamlessness(self.document.recipe, output_id=output_id)
+        measured = None
+        if self._latest_render_result is not None and self._latest_render_output_id == output_id:
+            try:
+                measured = measure_tileability(self._latest_render_result.rgba_field)
+            except (AttributeError, ValueError):
+                measured = None
+        if recipe_status == "No" or (measured is not None and not measured[0]):
+            status = "No"
+        elif recipe_status == "Yes" and measured is not None and measured[0]:
+            status = "Yes"
+        else:
+            status = "Unknown"
+        detail = (
+            f" Border gradient {measured[1]:.5f}; typical interior gradient {measured[2]:.5f}."
+            if measured is not None
+            else " Waiting for a current render to measure the image border."
+        )
+        explanation = (
+            "Yes means the generator settings support wrapping and the rendered map's "
+            "opposite edges match within the measured pixel-gradient tolerance. "
+            "No means a setting or edge measurement indicates a visible join. "
+            "Unknown means the current render has not provided enough evidence." + detail
+        )
+        self.simple_material_panel.set_tileability(status, explanation)
+        self.seamlessness_label.setText(
+            f"{self._selected_output(self.document.recipe).name} · "
+            f"{self._selected_output(self.document.recipe).value_type.title()} · "
+            f"Seamless: {status}"
+        )
+        self.seamlessness_label.setToolTip(explanation)
 
     @staticmethod
     def _contains_instance(recipe: ProjectRecipe, instance_id: str) -> bool:
@@ -978,6 +1200,8 @@ class MainWindow(QMainWindow):
             (item for item in render_recipe.outputs if item.output_id == self._selected_output_id),
             render_recipe.outputs[0],
         )
+        self._rendering_output_id = selected.output_id
+        self._latest_render_output_id = None
         self.statusBar().showMessage("Rendering…")
         try:
             self.render_coordinator.request(
@@ -1021,7 +1245,9 @@ class MainWindow(QMainWindow):
             return
         self.viewport.set_result(outcome.result)
         self._latest_render_result = outcome.result
+        self._latest_render_output_id = self._rendering_output_id
         self._latest_displayed_request_id = outcome.request_id
+        self._update_tileability_status(self._latest_render_output_id)
         self.viewport.set_mask_preview(
             (outcome.result.mask_fields or {}).get(self._selected_layer_id)
         )
@@ -1658,7 +1884,6 @@ class MainWindow(QMainWindow):
             )
         )
         layer.mask = ControlFieldBinding(identifier)
-        self._selected_control_field_id = identifier
         self._show_control_fields()
         self._commit_recipe(recipe, control_field_id=identifier)
 
@@ -2057,14 +2282,20 @@ class MainWindow(QMainWindow):
     def undo(self) -> None:
         if not self.document.can_undo:
             return
+        selected_control_field_id = self._selected_control_field_id
         self.document.undo()
         self._refresh_document(request_render=True)
+        if selected_control_field_id not in self.document.recipe.control_fields:
+            self._selected_control_field_id = selected_control_field_id
 
     def redo(self) -> None:
         if not self.document.can_redo:
             return
+        selected_control_field_id = self._selected_control_field_id
         self.document.redo()
         self._refresh_document(request_render=True)
+        if selected_control_field_id not in self.document.recipe.control_fields:
+            self._selected_control_field_id = selected_control_field_id
 
     def _confirm_discard(self) -> bool:
         if not self.document.dirty:
@@ -2182,8 +2413,10 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._closing = True
+        self._preview_refine_timer.stop()
         self._preview_request_id += 1
         self._preview_executor.shutdown(wait=False, cancel_futures=True)
+        self._preview_refine_executor.shutdown(wait=False, cancel_futures=True)
         self.preview_viewport.cleanup_gl()
         self.render_coordinator.close(wait=False)
         self.export_coordinator.close(wait=True)

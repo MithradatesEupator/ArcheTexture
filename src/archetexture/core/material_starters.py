@@ -213,108 +213,39 @@ def create_material_starter(name: str, *, width: int = 256, height: int = 256) -
     starter = next((item for item in MATERIAL_STARTERS if item.name == name), None)
     if starter is None:
         raise ValueError(f"Unknown material starter: {name}")
-    recipe = ProjectRecipe(width=width, height=height, seed=23)
+    recipe = ProjectRecipe(width=width, height=height, seed=23, outputs=[])
 
-    scale_source = _default_parameters("generator.value_noise")
-    scale_source.update(seed=201, scale=1.35)
-    wear_source = _default_parameters("generator.fractal_noise")
-    wear_source.update(seed=307, scale=2.5, octaves=4)
+    scale_source = _default_parameters("generator.seamless_value_noise")
+    scale_source.update(seed=201, cells_x=6, cells_y=6)
+    wear_source = _default_parameters("generator.seamless_fractal_noise")
+    wear_source.update(seed=307, cells_x=3, cells_y=3, octaves=4)
     recipe.control_fields = {
         "Scale": ControlFieldRecipe(
-            _instance("generator.value_noise", scale_source, prefix="control-scale")
+            _instance("generator.seamless_value_noise", scale_source, prefix="control-scale")
         ),
         "Wear": ControlFieldRecipe(
-            _instance("generator.fractal_noise", wear_source, prefix="control-wear")
+            _instance("generator.seamless_fractal_noise", wear_source, prefix="control-wear")
         ),
     }
 
     height_id = f"output-{uuid.uuid4().hex[:10]}"
-    source_parameters = _default_parameters(starter.generator)
+    periodic_source = {
+        "generator.ridged_noise": "generator.seamless_turbulence",
+        "generator.billow_noise": "generator.seamless_turbulence",
+        "generator.cellular": "generator.seamless_cellular",
+        "generator.hex_cells": "generator.seamless_cellular",
+        "generator.brick": "generator.seamless_cellular",
+    }.get(starter.generator, "generator.seamless_fractal_noise")
+    source_parameters = _default_parameters(periodic_source)
     if "seed" in source_parameters:
         source_parameters["seed"] = 101 + MATERIAL_STARTERS.index(starter)
-    if "scale" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "scale"
-        )
-        center = min(
-            max(starter.scale, spec.min_value or starter.scale), spec.max_value or starter.scale
-        )
-        source_parameters["scale"] = ControlFieldBinding(
-            "Scale",
-            ControlFieldMapping(
-                max(spec.min_value or 0.0, center * 0.8), min(spec.max_value or 48.0, center * 1.2)
-            ),
-        )
-    elif "density" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "density"
-        )
-        center = starter.scale
-        source_parameters["density"] = ControlFieldBinding(
-            "Scale",
-            ControlFieldMapping(
-                max(spec.min_value or 0.0, center * 0.8), min(spec.max_value or 64.0, center * 1.2)
-            ),
-        )
-    elif "frequency" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "frequency"
-        )
-        center = starter.scale
-        source_parameters["frequency"] = ControlFieldBinding(
-            "Scale",
-            ControlFieldMapping(
-                max(spec.min_value or 0.0, center * 0.8), min(spec.max_value or 128.0, center * 1.2)
-            ),
-        )
-    elif "rings" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "rings"
-        )
-        center = starter.scale
-        source_parameters["rings"] = ControlFieldBinding(
-            "Scale",
-            ControlFieldMapping(
-                max(spec.min_value or 0.0, center * 0.8), min(spec.max_value or 128.0, center * 1.2)
-            ),
-        )
-    elif "threads_x" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "threads_x"
-        )
-        center = starter.scale
-        source_parameters["threads_x"] = ControlFieldBinding(
-            "Scale",
-            ControlFieldMapping(
-                max(spec.min_value or 0.0, center * 0.8), min(spec.max_value or 128.0, center * 1.2)
-            ),
-        )
-    elif "radius" in source_parameters:
-        spec = next(
-            spec
-            for spec in REGISTRY.get(starter.generator).parameter_specs
-            if spec.identifier == "radius"
-        )
-        source_parameters["radius"] = ControlFieldBinding(
-            "Scale", ControlFieldMapping(0.18, min(spec.max_value or 0.49, 0.32))
-        )
+    if "cells_x" in source_parameters:
+        source_parameters["cells_x"] = max(2, min(64, round(starter.scale)))
+        source_parameters["cells_y"] = max(2, min(64, round(starter.scale * 0.8)))
     if "distance_mode" in source_parameters:
         source_parameters["distance_mode"] = "edge"
-    if starter.generator == "generator.bands":
-        source_parameters.update(angle=0.0, waveform="sine")
-    if starter.generator == "generator.brick":
-        source_parameters.update(columns=10, rows=7)
-        source_parameters["mortar"] = ControlFieldBinding("Scale", ControlFieldMapping(0.025, 0.11))
+    if periodic_source == "generator.seamless_turbulence":
+        source_parameters["octaves"] = 4
     height_gamma = _instance(
         "transform.gamma",
         {"power": ControlFieldBinding("Wear", ControlFieldMapping(0.65, 1.45))},
@@ -322,8 +253,14 @@ def create_material_starter(name: str, *, width: int = 256, height: int = 256) -
     height_layer = LayerRecipe(
         f"layer-{uuid.uuid4().hex[:10]}",
         "Editable Height Field",
-        _instance(starter.generator, source_parameters, prefix="height-source"),
-        [height_gamma],
+        _instance(periodic_source, source_parameters, prefix="height-source"),
+        [
+            height_gamma,
+            _instance(
+                "transform.gamma",
+                {"power": ControlFieldBinding("Scale", ControlFieldMapping(0.65, 1.45))},
+            ),
+        ],
     )
     height = MaterialOutputRecipe(height_id, "Height", "height", "scalar", [height_layer])
     recipe.outputs.append(height)

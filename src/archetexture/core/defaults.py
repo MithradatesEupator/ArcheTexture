@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.parameters import ControlFieldBinding, ControlFieldMapping
 from archetexture.core.recipe import (
+    ControlFieldRecipe,
     LayerRecipe,
     MaterialOutputRecipe,
     OperationInstance,
@@ -10,10 +12,38 @@ from archetexture.core.recipe import (
 
 
 def default_recipe() -> ProjectRecipe:
+    control_fields = {
+        "Scale": ControlFieldRecipe(
+            OperationInstance(
+                "default-control-scale",
+                "generator.seamless_value_noise",
+                1,
+                parameters={"seed": 201, "cells_x": 6, "cells_y": 6},
+            )
+        ),
+        "Wear": ControlFieldRecipe(
+            OperationInstance(
+                "default-control-wear",
+                "generator.seamless_fractal_noise",
+                1,
+                parameters={
+                    "seed": 307,
+                    "cells_x": 3,
+                    "cells_y": 3,
+                    "octaves": 4,
+                    "lacunarity": 2,
+                    "persistence": 0.5,
+                    "offset_x": 0.0,
+                    "offset_y": 0.0,
+                },
+            )
+        ),
+    }
     return ProjectRecipe(
         width=512,
         height=512,
         seed=31,
+        control_fields=control_fields,
         outputs=[
             MaterialOutputRecipe(
                 "base-color",
@@ -26,13 +56,14 @@ def default_recipe() -> ProjectRecipe:
                         "Layer 1",
                         OperationInstance(
                             "source-fractal",
-                            "generator.fractal_noise",
+                            "generator.seamless_fractal_noise",
                             1,
                             parameters={
                                 "seed": 23,
-                                "scale": 3.5,
+                                "cells_x": 4,
+                                "cells_y": 4,
                                 "octaves": 5,
-                                "lacunarity": 2.0,
+                                "lacunarity": 2,
                                 "persistence": 0.5,
                                 "offset_x": 0.0,
                                 "offset_y": 0.0,
@@ -46,7 +77,9 @@ def default_recipe() -> ProjectRecipe:
                                 parameters={
                                     "input_black": 0.12,
                                     "input_white": 0.88,
-                                    "gamma": 0.9,
+                                    "gamma": ControlFieldBinding(
+                                        "Scale", ControlFieldMapping(0.65, 1.45)
+                                    ),
                                     "output_black": 0.0,
                                     "output_white": 1.0,
                                 },
@@ -56,6 +89,16 @@ def default_recipe() -> ProjectRecipe:
                                 "transform.blur",
                                 1,
                                 parameters={"sigma": 0.6},
+                            ),
+                            OperationInstance(
+                                "fractal-wear",
+                                "transform.gamma",
+                                1,
+                                parameters={
+                                    "power": ControlFieldBinding(
+                                        "Wear", ControlFieldMapping(0.65, 1.45)
+                                    )
+                                },
                             ),
                         ],
                         color_ramp=ColorRamp(
@@ -71,11 +114,12 @@ def default_recipe() -> ProjectRecipe:
                         "Layer 2",
                         OperationInstance(
                             "source-cellular",
-                            "generator.cellular",
+                            "generator.seamless_cellular",
                             1,
                             parameters={
                                 "seed": 61,
-                                "scale": 8.0,
+                                "cells_x": 8,
+                                "cells_y": 8,
                                 "jitter": 0.8,
                                 "distance_mode": "edge",
                             },

@@ -53,6 +53,7 @@ def window(qtbot, monkeypatch):
         QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Discard
     )
     main = build_main_window(recipe())
+    main.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(main)
     main.show()
     qtbot.waitUntil(lambda: main.viewport.rendered_field is not None, timeout=5000)
@@ -324,7 +325,7 @@ def test_save_open_refreshes_control_field_tab(window, qtbot, tmp_path):
     expected = window.document.recipe
     pixels = RenderEngine().render(expected).rgba_field
     assert window.new_document()
-    assert fields.fields_list.count() == 0
+    assert fields.fields_list.count() == 2
     assert window.open_project(str(destination))
     assert fields.fields_list.count() == 1
     assert fields.selected_field_id == identifier

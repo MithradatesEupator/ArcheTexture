@@ -20,6 +20,7 @@ from archetexture.core.recipe import (
     ProjectRecipe,
 )
 from archetexture.core.serialization import (
+    _encode_control,
     _encode_layer,
     load_project,
     migrate_recipe,
@@ -150,7 +151,10 @@ def test_v4_migration_preserves_rendered_pixels_as_custom_color(tmp_path):
     recipe = default_recipe()
     engine = RenderEngine()
     legacy = ProjectRecipe(
-        width=recipe.width, height=recipe.height, layers=recipe.outputs[0].layers
+        width=recipe.width,
+        height=recipe.height,
+        layers=recipe.outputs[0].layers,
+        control_fields=recipe.control_fields,
     )
     expected = engine.render(legacy).rgba_field
     modern = json.loads(
@@ -161,7 +165,9 @@ def test_v4_migration_preserves_rendered_pixels_as_custom_color(tmp_path):
                 "height": legacy.height,
                 "seed": legacy.seed,
                 "layers": [_encode_layer(layer) for layer in legacy.layers],
-                "control_fields": {},
+                "control_fields": {
+                    key: _encode_control(value) for key, value in legacy.control_fields.items()
+                },
             }
         )
     )
@@ -387,7 +393,9 @@ def test_schema_v3_migration_uses_unknown_custom_color_semantics():
         "height": recipe.height,
         "seed": recipe.seed,
         "layers": [_encode_layer(layer) for layer in recipe.outputs[0].layers],
-        "control_fields": {},
+        "control_fields": {
+            key: _encode_control(value) for key, value in recipe.control_fields.items()
+        },
     }
     migrated = migrate_recipe(legacy)
     assert [(item.semantic, item.value_type) for item in migrated.outputs] == [

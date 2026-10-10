@@ -5,6 +5,8 @@ import pytest
 from PIL import Image
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.core.defaults import default_recipe
+from archetexture.core.material_starters import MATERIAL_STARTERS, create_material_starter
 from archetexture.core.operations import Seamlessness
 from archetexture.core.parameters import ControlFieldBinding
 from archetexture.core.recipe import LayerRecipe, OperationInstance, ProjectRecipe
@@ -14,7 +16,7 @@ from archetexture.core.sampling import (
     sample_periodic_value_noise,
     sample_periodic_value_noise_at,
 )
-from archetexture.core.seamlessness import recipe_seamlessness
+from archetexture.core.seamlessness import measure_tileability, recipe_seamlessness
 from archetexture.core.serialization import load_project, save_project
 from archetexture.core.validation import ValidationError, ensure_valid_recipe
 from archetexture.export.image_export import ImageExporter
@@ -309,3 +311,35 @@ def test_seamless_recipe_save_load_render_and_png_stay_one_tile(operation_id, tm
         assert image.size == (47, 31)
         assert image.mode == "RGBA"
         np.testing.assert_array_equal(np.asarray(image), rgba_float_to_uint8(expected))
+
+
+def test_tileability_measure_passes_periodic_fields_and_flags_border_jumps():
+    coordinates = np.linspace(0, 2 * np.pi, 96, dtype=np.float32)
+    y, x = np.meshgrid(coordinates, coordinates, indexing="ij")
+    periodic = np.stack(
+        (
+            np.sin(x) * 0.5 + 0.5,
+            np.cos(y) * 0.5 + 0.5,
+            np.sin(x + y) * 0.5 + 0.5,
+        ),
+        axis=-1,
+    )
+    assert measure_tileability(periodic)[0]
+
+    broken = periodic.copy()
+    broken[:, -1, :] = 1.0 - broken[:, -1, :]
+    assert not measure_tileability(broken)[0]
+
+
+@pytest.mark.parametrize("starter_name", [None, *(starter.name for starter in MATERIAL_STARTERS)])
+def test_default_and_starter_outputs_have_seamless_rendered_borders(starter_name):
+    recipe = default_recipe() if starter_name is None else create_material_starter(starter_name)
+    engine = RenderEngine()
+    for output in recipe.outputs:
+        result = engine.render_output(recipe, output.output_id, width=128, height=128)
+        assert recipe_seamlessness(recipe, output_id=output.output_id) == "Yes"
+        is_tileable, edge_gradient, adjacent_gradient = measure_tileability(result.rgba_field)
+        assert is_tileable, (
+            f"{starter_name or 'Default'} / {output.name}: edge={edge_gradient}, "
+            f"adjacent={adjacent_gradient}"
+        )

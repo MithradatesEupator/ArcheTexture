@@ -298,6 +298,7 @@ def test_pipeline_ui_append_reorder_output_description_undo_redo_and_dark(qtbot,
         )
     )
     window = build_main_window(recipe)
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitUntil(lambda: window.viewport.rendered_field is not None, timeout=5000)

@@ -37,7 +37,7 @@ class RampPreview(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("color-ramp-preview")
-        self.setMinimumHeight(62)
+        self.setMinimumHeight(58)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._ramp: ColorRamp | None = None
         self._selected_index: int | None = None
@@ -216,8 +216,8 @@ class ColorRampEditor(QWidget):
         self._applicable = True
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 5)
-        layout.setSpacing(3)
+        layout.setContentsMargins(6, 3, 6, 4)
+        layout.setSpacing(2)
 
         actions = QHBoxLayout()
         actions.setSpacing(5)
@@ -250,6 +250,7 @@ class ColorRampEditor(QWidget):
         )
         self.inapplicable_label.setObjectName("color-ramp-inapplicable")
         self.inapplicable_label.setWordWrap(True)
+        self.inapplicable_label.setMinimumHeight(30)
         layout.addWidget(self.inapplicable_label)
 
         self.preview = RampPreview(self)
@@ -356,7 +357,13 @@ class ColorRampEditor(QWidget):
         stops = self._stops()
         selected = self.selected_stop
         has_ramp = self._ramp is not None
-        self.inapplicable_label.setVisible(not self._applicable)
+        self.inapplicable_label.setText(
+            ""
+            if self._applicable
+            else "Color ramps apply to scalar output; remove the ramp before converting "
+            "this layer to a normal map."
+        )
+        self.inapplicable_label.setVisible(True)
         self.create_button.setVisible(not has_ramp and self._applicable)
         self.add_button.setEnabled(
             has_ramp and self._applicable and self._largest_gap() is not None

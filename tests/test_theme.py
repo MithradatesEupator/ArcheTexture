@@ -221,12 +221,16 @@ def _assert_no_large_near_white_surface(window):
 def test_dark_mode_renders_right_tabs_and_representative_controls(qtbot, tmp_path):
     _settings(tmp_path)
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     window._set_theme("dark", persist=False)
     window.resize(1360, 850)
     window.show()
     qtbot.wait(50)
+    source_index = window.pipeline_panel.source_selector.findData("generator.fractal_noise")
+    window.pipeline_panel.source_selector.setCurrentIndex(source_index)
+    qtbot.wait(20)
 
     window.right_tabs.setCurrentIndex(0)
     qtbot.wait(20)
@@ -247,13 +251,14 @@ def test_dark_mode_renders_right_tabs_and_representative_controls(qtbot, tmp_pat
     disabled_numeric = window.control_fields_editor.mapping_min
     assert not disabled_numeric.isEnabled()
     _assert_widget_is_dark(disabled_numeric, "disabled numeric input", 0.55)
-    assert not window.control_fields_editor.source_combo.isEnabled()
-    _assert_widget_is_dark(window.control_fields_editor.source_combo, "disabled combo box", 0.55)
+    assert window.control_fields_editor.source_combo.isEnabled()
+    _assert_widget_is_dark(window.control_fields_editor.source_combo, "source combo box")
     assert isinstance(window.control_fields_editor.mapping_enabled, QCheckBox)
-    _assert_widget_is_dark(window.control_fields_editor.mapping_enabled, "disabled checkbox", 0.55)
+    assert window.control_fields_editor.mapping_enabled.isEnabled()
+    _assert_widget_is_dark(window.control_fields_editor.mapping_enabled, "mapping checkbox")
     disabled_button = window.property_editor.findChild(QPushButton, "modulate-scale")
-    assert disabled_button is not None and not disabled_button.isEnabled()
-    _assert_widget_is_dark(disabled_button, "disabled button", 0.55)
+    assert disabled_button is not None and disabled_button.isEnabled()
+    _assert_widget_is_dark(disabled_button, "modulation button")
     line_edit = window.control_fields_editor.name_input
     assert isinstance(line_edit, QLineEdit)
     _assert_widget_is_dark(line_edit, "line edit", 0.55)

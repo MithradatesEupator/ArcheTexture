@@ -9,6 +9,7 @@ from archetexture.ui.main_window import MainWindow
 
 def test_default_workspace_layers_history_selected_pipeline_and_direct_parameter(qtbot):
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     assert len(window.document.recipe.layers) >= 2
@@ -62,6 +63,7 @@ def test_theme_actions_apply_palette_and_persist(qtbot, tmp_path, monkeypatch):
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     window.theme_actions["dark"].trigger()
@@ -86,6 +88,7 @@ def test_theme_actions_apply_palette_and_persist(qtbot, tmp_path, monkeypatch):
     assert settings.value("appearance/theme") == "system"
     window.close()
     restarted = MainWindow()
+    restarted.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(restarted)
     assert restarted.theme_actions["system"].isChecked()
     restarted._confirm_discard = lambda: True
@@ -94,6 +97,7 @@ def test_theme_actions_apply_palette_and_persist(qtbot, tmp_path, monkeypatch):
 
 def test_rename_visibility_reorder_opacity_and_blend_edits_undo_redo(qtbot):
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     recipe = window.document.recipe
@@ -126,6 +130,7 @@ def test_rename_visibility_reorder_opacity_and_blend_edits_undo_redo(qtbot):
 
 def test_layer_removal_is_undoable(qtbot):
     window = MainWindow()
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     layers = window.document.recipe.layers
@@ -163,9 +168,12 @@ def test_layer_identity_context_and_parameters_stay_visible(qtbot):
     assert "Stone Breakup" in window.context_breadcrumb.text()
 
     original_name = window._layer().name
+    window.authoring_mode_combo.setCurrentIndex(1)
     window._source_changed("generator.cellular")
     assert window._layer().name == original_name
-    assert window.layers_panel.pipeline_descriptor.text().startswith("Color — Cellular")
+    assert window.layers_panel.pipeline_descriptor.text() == window._layer_descriptor(
+        window._layer()
+    )
     assert item is not None
     window._add_layer()
     assert window._layer().name.startswith("Constant")

@@ -17,11 +17,15 @@ def test_starter_opens_with_usable_simple_channels(starter, qtbot):
     window = MainWindow(create_material_starter(starter))
     qtbot.addWidget(window)
 
-    assert window.right_tabs.tabText(0) == "Simple"
-    assert window.right_tabs.currentIndex() == 0
+    assert window.authoring_mode_combo.currentText() == "Simple Editor"
+    assert window.right_tabs.tabText(0) == "View Settings"
     assert window.preview_controls.mesh.currentText() == "UV Sphere"
     assert window.preview_controls.quality.currentText() == "High"
     assert window.preview_controls.mode.currentText() == "Material"
+    assert (
+        window.simple_material_panel.source_selector.currentData()
+        == window._layer().source.operation_id
+    )
     assert window.simple_material_panel.channel_buttons["base_color"].isEnabled()
     assert window.simple_material_panel.channel_buttons["normal"].isEnabled()
     assert window.simple_material_panel.channel_buttons["roughness"].isEnabled()
@@ -52,7 +56,7 @@ def test_simple_channels_select_existing_outputs_and_modes_preserve_selection(qt
         window._selected_instance_id,
     )
     for index in (1, 0, 1, 0):
-        window.right_tabs.setCurrentIndex(index)
+        window.authoring_mode_combo.setCurrentIndex(index)
         assert window.document.recipe == recipe_before
         assert window.document.history.entries == history_before
         assert window.document.dirty == dirty_before
@@ -62,7 +66,7 @@ def test_simple_channels_select_existing_outputs_and_modes_preserve_selection(qt
             window._selected_instance_id,
         ) == selection
     assert window.output_selector.isHidden()
-    window.right_tabs.setCurrentIndex(1)
+    window.authoring_mode_combo.setCurrentIndex(1)
     assert not window.output_selector.isHidden()
     window.close()
 
@@ -73,16 +77,49 @@ def test_simple_starter_controls_edit_the_existing_control_field(qtbot):
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
     initial_index = window.document.history.index
-    initial_scale = recipe.control_fields["Scale"].source.parameters["scale"]
+    initial_scale = recipe.control_fields["Scale"].source.parameters["cells_x"]
     scale = window.simple_material_panel.control_spins["Scale"]
 
-    scale.setValue(initial_scale + 0.25)
+    scale.setValue(initial_scale + 1)
 
-    edited = window.document.recipe.control_fields["Scale"].source.parameters["scale"]
-    assert edited == pytest.approx(initial_scale + 0.25)
+    edited = window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
+    assert edited == pytest.approx(initial_scale + 1)
     assert window.document.history.index == initial_index + 1
     assert window.document.dirty
-    assert window.right_tabs.currentIndex() == 0
+    assert window.authoring_mode_combo.currentIndex() == 0
+    window.close()
+
+
+def test_default_material_exposes_recipe_backed_simple_controls(qtbot):
+    window = MainWindow(default_recipe())
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    assert set(window.simple_material_panel.control_spins) >= {"Scale", "Wear"}
+    initial_index = window.document.history.index
+    initial_scale = window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
+
+    window.simple_material_panel.control_spins["Scale"].setValue(initial_scale + 1)
+
+    assert (
+        window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
+        == initial_scale + 1
+    )
+    assert window.document.history.index == initial_index + 1
+    assert window.document.dirty
+    window.close()
+
+
+def test_simple_source_selector_edits_the_selected_layer_source(qtbot):
+    window = MainWindow(create_material_starter("Wood Grain"))
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    selector = window.simple_material_panel.source_selector
+    index = selector.findData("generator.seamless_cellular")
+    assert index >= 0
+    selector.setCurrentIndex(index)
+    assert window._layer().source.operation_id == "generator.seamless_cellular"
+    assert selector.currentData() == window._layer().source.operation_id
+    assert window.authoring_mode_combo.currentIndex() == 0
     window.close()
 
 
@@ -139,4 +176,48 @@ def test_camera_zoom_only_changes_for_a_wheel_over_the_3d_viewport(qtbot):
     outside_global = view.mapToGlobal(outside_point)
     view.wheelEvent(_wheel_event(outside_point, outside_global))
     assert view.camera.distance == pytest.approx(after_zoom)
+    window.close()
+
+
+def test_non_camera_edits_leave_camera_and_central_viewport_geometry_unchanged(qtbot, tmp_path):
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path))
+    settings = QSettings(
+        QSettings.Format.IniFormat,
+        QSettings.Scope.UserScope,
+        "ArcheTexture",
+        "ArcheTexture",
+    )
+    settings.clear()
+    settings.sync()
+    window = MainWindow(create_material_starter("Rough Stone"))
+    qtbot.addWidget(window)
+    window.resize(1360, 850)
+    window.show()
+    qtbot.wait(160)
+    qtbot.wait(200)
+    splitter = window.centralWidget()
+    camera = window.preview_viewport.camera
+
+    def capture():
+        return (
+            camera.distance,
+            camera.fov,
+            camera.projection,
+            tuple(camera.target),
+            camera.yaw,
+            camera.pitch,
+            window.workspace_stack.size(),
+            window.preview_viewport.size(),
+            tuple(splitter.sizes()),
+        )
+
+    before = capture()
+    for semantic in ("base_color", "normal", "roughness", "metallic", "base_color"):
+        window.simple_material_panel.channel_buttons[semantic].click()
+        window.layers_panel.layer_list.setCurrentRow(0)
+        window.authoring_mode_combo.setCurrentIndex(1)
+        window.authoring_mode_combo.setCurrentIndex(0)
+        qtbot.wait(80)
+        assert capture() == before, f"central view or camera changed while editing {semantic}"
     window.close()

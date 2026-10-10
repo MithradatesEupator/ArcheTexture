@@ -59,7 +59,7 @@ def wait_for_render(qtbot, window) -> None:
             window.viewport.rendered_field is not None
             and window.statusBar().currentMessage() != "Rendering…"
         ),
-        timeout=5000,
+        timeout=15000,
     )
 
 

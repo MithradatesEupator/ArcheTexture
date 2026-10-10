@@ -21,6 +21,7 @@ from archetexture.core.operations import OperationDefinition, OperationType
 from archetexture.core.output_dependencies import transitive_output_dependencies
 from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance
+from archetexture.ui.delayed_help import DelayedHelp
 
 
 class _DirectSpinBox(QSpinBox):
@@ -53,6 +54,7 @@ class PropertyEditor(QWidget):
         self._current_output_id: str | None = None
         self._cycle_targets: set[str] = set()
         self._project_path = None
+        self._simple_mode = False
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
         heading_font = QFont(self._heading.font())
@@ -74,12 +76,37 @@ class PropertyEditor(QWidget):
             self._heading.setText("Properties")
             self._form.addRow(QLabel("Select a source or transform."))
             return
+        if self._simple_mode and definition.operation_type == OperationType.TRANSFORM:
+            self._heading.setText("Advanced transform")
+            self._form.addRow(QLabel("Switch to Advanced Editor to edit transforms."))
+            return
         self._heading.setText(definition.name)
         operation_id = definition.identifier
         mode = instance.parameters.get("mode", "Direct")
         for spec in definition.parameter_specs:
+            if self._simple_mode and spec.identifier not in {
+                "scale",
+                "frequency",
+                "density",
+                "cells_x",
+                "cells_y",
+                "rings",
+                "threads_x",
+                "amount",
+                "strength",
+                "contrast",
+                "brightness",
+                "threshold",
+                "roughness",
+                "metallic",
+                "value",
+                "color",
+            }:
+                continue
             value = instance.parameters.get(spec.identifier, spec.default)
             widget = self._make_widget(spec, value)
+            if spec.description:
+                DelayedHelp.register(widget, spec.description)
             if spec.type == ParameterType.MATERIAL_OUTPUT and isinstance(widget, QComboBox):
                 blocked = widget.blockSignals(True)
                 widget.clear()
@@ -108,7 +135,16 @@ class PropertyEditor(QWidget):
                     index = widget.count() - 1
                 widget.setCurrentIndex(index)
                 widget.blockSignals(blocked)
-            self._form.addRow(spec.name, widget)
+            label = spec.name
+            if self._simple_mode and spec.identifier in {"scale", "frequency", "density"}:
+                label = "Pattern Scale"
+            elif (
+                self._simple_mode
+                and operation_id == "transform.height_to_normal"
+                and spec.identifier == "strength"
+            ):
+                label = "Surface Depth"
+            self._form.addRow(label, widget)
         if definition.operation_type == OperationType.TRANSFORM:
             influence_spec = ParameterSpec(
                 "influence",
@@ -120,11 +156,16 @@ class PropertyEditor(QWidget):
                 step=0.01,
                 description="Blend between the previous field and this transform.",
             )
-            self._form.addRow("Influence", self._make_widget(influence_spec, instance.influence))
+            influence_widget = self._make_widget(influence_spec, instance.influence)
+            DelayedHelp.register(influence_widget, influence_spec.description)
+            self._form.addRow("Influence", influence_widget)
 
     def _clear_form(self) -> None:
         while self._form.rowCount():
             self._form.removeRow(0)
+
+    def set_simple_mode(self, simple: bool) -> None:
+        self._simple_mode = simple
 
     def _make_widget(self, spec: ParameterSpec, value) -> QWidget:
         if isinstance(value, ControlFieldBinding):

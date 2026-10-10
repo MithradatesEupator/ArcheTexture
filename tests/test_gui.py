@@ -56,6 +56,7 @@ def workbench(qtbot, monkeypatch):
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Discard,
     )
     window = build_main_window(small_recipe())
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window.show()
     qtbot.waitUntil(lambda: window.viewport.rendered_field is not None, timeout=5000)
@@ -79,6 +80,7 @@ def test_switching_output_does_not_reenter_material_reference_editor(qtbot, monk
     )
     recipe = create_material_starter(MATERIAL_STARTERS[0].name, width=16, height=16)
     window = build_main_window(recipe)
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     window.show()
     changed_during_rebuild = []
@@ -244,6 +246,7 @@ def test_property_editor_builds_enum_boolean_color_and_position_controls(qtbot, 
         ),
     )
     window = build_main_window(recipe)
+    window.authoring_mode_combo.setCurrentIndex(1)
     qtbot.addWidget(window)
     try:
         window.show()
@@ -356,7 +359,7 @@ def test_new_document_discards_only_after_explicit_confirmation(workbench, qtbot
     assert workbench.document.dirty
     assert workbench.new_document()
     recipe = workbench.document.recipe
-    assert recipe.source.operation_id == "generator.fractal_noise"
+    assert recipe.source.operation_id == "generator.seamless_fractal_noise"
     assert not workbench.document.dirty
     qtbot.waitUntil(
         lambda: (

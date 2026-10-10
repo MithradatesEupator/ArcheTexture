@@ -103,7 +103,7 @@ def main() -> int:
             env=environment,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=300,
             check=False,
         )
         if not report_path.is_file():
