@@ -126,10 +126,18 @@ def test_numeric_control_supports_mouse_steps_and_typed_values(qtbot):
         unit="Scale",
     )
     qtbot.addWidget(control)
+    control.show()
+    qtbot.waitUntil(
+        lambda: (
+            control.decrement.geometry().center().x() < control.increment.geometry().center().x()
+        )
+    )
     changes = []
     control.valueChanged.connect(changes.append)
+    qtbot.mouseClick(control.decrement, Qt.MouseButton.LeftButton)
+    assert control.value() == 0.4
     qtbot.mouseClick(control.increment, Qt.MouseButton.LeftButton)
-    assert control.value() == 0.6
+    assert control.value() == 0.5
     control.editor.setFocus()
     control.editor.selectAll()
     QTest.keyClicks(control.editor, "0.37")
@@ -137,7 +145,7 @@ def test_numeric_control_supports_mouse_steps_and_typed_values(qtbot):
     assert control.value() == 0.37
     QTest.keyClick(control.editor, Qt.Key.Key_Up)
     assert control.value() == 0.47
-    assert changes == [0.6, 0.37, 0.47]
+    assert changes == [0.4, 0.5, 0.37, 0.47]
 
 
 def test_layer_stack_thumbnail_comes_from_the_render_engine(qtbot):

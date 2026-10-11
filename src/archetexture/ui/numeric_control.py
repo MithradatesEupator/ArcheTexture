@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QWidget
 
 
 class NumericControl(QWidget):
@@ -46,12 +46,12 @@ class NumericControl(QWidget):
         self.unit_label.setMinimumWidth(18)
         self.unit_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.unit_label)
-        buttons = QVBoxLayout()
+        buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(1)
         self.increment = QPushButton("+", self)
         self.decrement = QPushButton("−", self)
-        for button in (self.increment, self.decrement):
+        for button in (self.decrement, self.increment):
             button.setAutoRepeat(True)
             button.setAutoRepeatDelay(350)
             button.setAutoRepeatInterval(75)
