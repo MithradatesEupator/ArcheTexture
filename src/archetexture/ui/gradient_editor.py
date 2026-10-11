@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QLabel,
     QVBoxLayout,
@@ -16,6 +15,7 @@ from PySide6.QtWidgets import (
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.recipe import LayerRecipe
 from archetexture.ui.color_ramp_editor import ColorRampEditor
+from archetexture.ui.numeric_control import NumericControl
 
 
 class GradientEditorDialog(QDialog):
@@ -46,24 +46,20 @@ class GradientEditorDialog(QDialog):
         self.kind.addItem("Linear Gradient", "generator.linear_gradient")
         self.kind.addItem("Radial Gradient", "generator.radial_gradient")
         form.addRow("Gradient", self.kind)
-        self.angle = QDoubleSpinBox(self)
+        self.angle = NumericControl(
+            0.0, minimum=0.0, maximum=360.0, step=1.0, decimals=1, unit="°", parent=self
+        )
         self.angle.setObjectName("gradient-angle")
-        self.angle.setRange(0.0, 360.0)
-        self.angle.setDecimals(1)
-        self.angle.setSingleStep(1.0)
-        self.angle.setSuffix("°")
         form.addRow("Direction", self.angle)
-        self.radius = QDoubleSpinBox(self)
+        self.radius = NumericControl(
+            0.5, minimum=0.01, maximum=1.0, step=0.01, decimals=2, parent=self
+        )
         self.radius.setObjectName("gradient-radius")
-        self.radius.setRange(0.01, 1.0)
-        self.radius.setDecimals(2)
-        self.radius.setSingleStep(0.01)
         form.addRow("Radius", self.radius)
-        self.opacity = QDoubleSpinBox(self)
+        self.opacity = NumericControl(
+            1.0, minimum=0.0, maximum=1.0, step=0.05, decimals=2, unit="Opacity", parent=self
+        )
         self.opacity.setObjectName("gradient-opacity")
-        self.opacity.setRange(0.0, 1.0)
-        self.opacity.setDecimals(2)
-        self.opacity.setSingleStep(0.05)
         form.addRow("Opacity", self.opacity)
         layout.addLayout(form)
 

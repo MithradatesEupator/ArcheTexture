@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture.color.ramp import ColorRamp, ColorStop
+from archetexture.ui.numeric_control import NumericControl
 from archetexture.ui.theme import ramp_checkerboard_colors
 
 
@@ -205,6 +206,8 @@ class ColorRampEditor(QWidget):
 
     rampEdited = Signal(object)
     previewRequested = Signal(object)
+    editStarted = Signal()
+    editFinished = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -262,12 +265,17 @@ class ColorRampEditor(QWidget):
         controls = QHBoxLayout()
         controls.setSpacing(6)
         controls.addWidget(QLabel("Selected stop position"))
-        self.position_spin = _RampPositionSpinBox()
+        self.position_spin = NumericControl(
+            0.0,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.001,
+            decimals=6,
+            unit="Position",
+            parent=self,
+        )
         self.position_spin.setObjectName("ramp-position")
-        self.position_spin.setDecimals(6)
-        self.position_spin.setSingleStep(0.001)
-        self.position_spin.setRange(0.0, 1.0)
-        self.position_spin.setFixedWidth(112)
+        self.position_spin.setFixedWidth(190)
         controls.addWidget(self.position_spin)
         self.color_button = QPushButton("Edit color…")
         self.color_button.setObjectName("ramp-color-button")
@@ -281,6 +289,8 @@ class ColorRampEditor(QWidget):
         self.remove_stop_button.clicked.connect(self.remove_stop)
         self.remove_ramp_button.clicked.connect(self.remove_ramp)
         self.position_spin.valueChanged.connect(self._position_changed)
+        self.position_spin.editStarted.connect(self.editStarted)
+        self.position_spin.editFinished.connect(self.editFinished)
         self.color_button.clicked.connect(self.choose_color)
         self.set_ramp(None, reset_selection=True)
 

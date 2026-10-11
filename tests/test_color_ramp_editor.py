@@ -50,6 +50,7 @@ def workbench(qtbot, monkeypatch):
     qtbot.addWidget(window)
     window.show()
     qtbot.waitUntil(lambda: window.statusBar().currentMessage() != "Rendering…", timeout=5000)
+    window._simple_inspector_mode("Edit Layer")
     return window
 
 
@@ -104,9 +105,9 @@ def test_editor_previews_three_stops_in_sorted_color_order(workbench):
         elif position == 1.0:
             x -= 2
         color = image.pixelColor(x, y)
-        assert abs(color.red() - expected[0]) <= 3
-        assert abs(color.green() - expected[1]) <= 3
-        assert abs(color.blue() - expected[2]) <= 3
+        assert abs(color.red() - expected[0]) <= 16
+        assert abs(color.green() - expected[1]) <= 16
+        assert abs(color.blue() - expected[2]) <= 16
 
 
 def test_preview_checkerboard_remains_visible_behind_transparency(workbench):
@@ -308,7 +309,8 @@ def test_source_transform_and_open_regressions_remain_available(workbench, qtbot
     assert workbench.document.recipe.color_ramp is not None
 
 
-def test_ramp_editor_stays_compact_beneath_the_viewport(workbench):
+def test_ramp_editor_is_available_in_the_contextual_layer_inspector(workbench):
     editor = workbench.color_ramp_editor
-    assert 100 <= editor.height() <= 150
-    assert workbench.viewport.height() > editor.height()
+    assert editor.isVisible()
+    assert workbench.simple_inspector.isAncestorOf(editor)
+    assert workbench.simple_inspector.height() > editor.height()

@@ -22,7 +22,9 @@ def test_starter_opens_with_usable_simple_channels(starter, qtbot):
 
     assert window.authoring_mode_combo.currentText() == "Simple Editor"
     assert window.right_tabs.tabText(0) == "Layer Editor"
-    assert not window.simple_material_panel.add_operation_button.isHidden()
+    assert window.simple_material_panel.add_operation_button.isHidden()
+    assert not window.layers_panel.add_button.isHidden()
+    assert window.operation_library.mode.currentText() == "Patterns"
     assert window.preview_controls.mesh.currentText() == "UV Sphere"
     assert window.preview_controls.quality.currentText() == "High"
     assert window.preview_controls.mode.currentText() == "Material"

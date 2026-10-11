@@ -71,6 +71,7 @@ from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.gradient_editor import GradientEditorDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.material_starter_dialog import MaterialStarterDialog
+from archetexture.ui.operation_library import LibraryPreset, OperationLibraryPanel, operation_recipe
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.preview_controls import PreviewControls
 from archetexture.ui.project_settings_dialog import ProjectSettingsDialog
@@ -157,6 +158,7 @@ class MainWindow(QMainWindow):
         self.preview_viewport = MaterialGLViewport(self)
         self.preview_controls = PreviewControls(self)
         self.simple_material_panel = SimpleMaterialPanel(self)
+        self.operation_library = OperationLibraryPanel(self)
         self.color_ramp_editor = ColorRampEditor(self)
         self.property_editor = PropertyEditor(self)
         self.control_fields_editor = ControlFieldsEditor(self)
@@ -167,6 +169,8 @@ class MainWindow(QMainWindow):
         self.pipeline_panel.transformEnabled.connect(self._transform_enabled)
         self.pipeline_panel.selectionChanged.connect(self._select_instance)
         self.property_editor.valueChanged.connect(self._property_changed)
+        self.property_editor.editStarted.connect(self.document.history.begin_group)
+        self.property_editor.editFinished.connect(self.document.history.end_group)
         self.property_editor.assetBrowseRequested.connect(self._browse_main_asset)
         self.property_editor.bindingRequested.connect(self._main_binding_requested)
         self.control_fields_editor.createRequested.connect(self._create_control_field)
@@ -185,6 +189,8 @@ class MainWindow(QMainWindow):
         self.control_fields_editor.bindingRequested.connect(self._control_binding_requested)
         self.color_ramp_editor.rampEdited.connect(self._color_ramp_changed)
         self.color_ramp_editor.previewRequested.connect(self._preview_color_ramp)
+        self.color_ramp_editor.editStarted.connect(self.document.history.begin_group)
+        self.color_ramp_editor.editFinished.connect(self.document.history.end_group)
         self.layers_panel.addRequested.connect(self._add_layer)
         self.layers_panel.removeRequested.connect(self._remove_layer)
         self.layers_panel.duplicateRequested.connect(self._duplicate_layer)
@@ -193,6 +199,8 @@ class MainWindow(QMainWindow):
         self.layers_panel.enabledChanged.connect(self._layer_enabled)
         self.layers_panel.moved.connect(self._layer_moved)
         self.layers_panel.opacityChanged.connect(self._layer_opacity_changed)
+        self.layers_panel.opacityEditStarted.connect(self.document.history.begin_group)
+        self.layers_panel.opacityEditFinished.connect(self.document.history.end_group)
         self.layers_panel.blendModeChanged.connect(self._layer_blend_changed)
         self.layers_panel.maskChanged.connect(self._layer_mask_changed)
         self.layers_panel.maskEditRequested.connect(self._edit_layer_mask)
@@ -208,6 +216,10 @@ class MainWindow(QMainWindow):
         self.simple_material_panel.controlParameterChanged.connect(self._simple_control_changed)
         self.simple_material_panel.controlEditStarted.connect(self.document.history.begin_group)
         self.simple_material_panel.controlEditFinished.connect(self.document.history.end_group)
+        self.operation_library.layerRequested.connect(self._add_library_operation)
+        self.operation_library.starterRequested.connect(self._new_from_library_starter)
+        self.operation_library.imageRequested.connect(self._simple_add_image)
+        self.operation_library.modeChanged.connect(self._simple_inspector_mode)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)
@@ -305,21 +317,39 @@ class MainWindow(QMainWindow):
         self.simple_inspector.setObjectName("simple-layer-inspector")
         simple_inspector_layout = QVBoxLayout(self.simple_inspector)
         simple_inspector_layout.setContentsMargins(4, 4, 4, 4)
+        inspector_modes = QHBoxLayout()
+        self.browse_operations_button = QPushButton("Browse Library", self.simple_inspector)
+        self.browse_operations_button.setObjectName("browse-operation-library")
+        self.edit_layer_button = QPushButton("Edit Layer", self.simple_inspector)
+        self.edit_layer_button.setObjectName("edit-selected-layer")
+        inspector_modes.addWidget(self.browse_operations_button)
+        inspector_modes.addWidget(self.edit_layer_button)
+        simple_inspector_layout.addLayout(inspector_modes)
+        self.simple_inspector_pages = QStackedWidget(self.simple_inspector)
+        self.simple_inspector_pages.addWidget(self.operation_library)
+        self.simple_edit_page = QWidget(self.simple_inspector_pages)
+        edit_page_layout = QVBoxLayout(self.simple_edit_page)
+        edit_page_layout.setContentsMargins(0, 0, 0, 0)
         self.inspector_heading = QLabel("Selected Layer", self.simple_inspector)
         self.inspector_heading.setObjectName("simple-inspector-heading")
-        simple_inspector_layout.addWidget(self.inspector_heading)
+        edit_page_layout.addWidget(self.inspector_heading)
         self.gradient_edit_button = QPushButton("Edit Gradient…", self.simple_inspector)
         self.gradient_edit_button.setObjectName("edit-gradient")
         self.gradient_edit_button.clicked.connect(self._edit_selected_gradient)
-        simple_inspector_layout.addWidget(self.gradient_edit_button)
+        edit_page_layout.addWidget(self.gradient_edit_button)
         left_layout.removeWidget(self.property_editor_scroll)
         self.property_editor_scroll.setParent(self.simple_inspector)
-        simple_inspector_layout.addWidget(self.property_editor_scroll, 1)
+        edit_page_layout.addWidget(self.property_editor_scroll, 1)
         self.color_ramp_editor.setParent(self.simple_inspector)
-        simple_inspector_layout.addWidget(self.color_ramp_editor, 0)
+        edit_page_layout.addWidget(self.color_ramp_editor, 0)
+        self.simple_inspector_pages.addWidget(self.simple_edit_page)
+        simple_inspector_layout.addWidget(self.simple_inspector_pages, 1)
+        self.browse_operations_button.clicked.connect(
+            lambda: self._simple_inspector_mode("Browse Library")
+        )
+        self.edit_layer_button.clicked.connect(lambda: self._simple_inspector_mode("Edit Layer"))
         self.left_authoring_scroll = QScrollArea(self)
         self.left_authoring_scroll.setWidgetResizable(True)
-        self.left_authoring_scroll.setFixedWidth(330)
         self.left_authoring_scroll.setWidget(left_content)
         splitter.addWidget(self.left_authoring_scroll)
         splitter.addWidget(center_panel)
@@ -342,12 +372,11 @@ class MainWindow(QMainWindow):
         self.advanced_tabs = self.right_tabs
         self.right_tabs.setCurrentIndex(0)
         self.right_tabs.setMinimumWidth(320)
-        self.right_tabs.setFixedWidth(340)
         splitter.addWidget(self.right_tabs)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
-        splitter.setSizes([330, 700, 340])
+        splitter.setSizes([270, 790, 360])
         splitter.setMinimumSize(980, 560)
         self.setCentralWidget(splitter)
         self.workspace_mode_combo.currentIndexChanged.connect(self._workspace_mode_changed)
@@ -628,7 +657,6 @@ class MainWindow(QMainWindow):
     def _authoring_mode_changed(self, index: int) -> None:
         simple = index == 0
         self.simple_material_panel.channel_widget.setVisible(simple)
-        self.simple_material_panel.controls_widget.setVisible(simple)
         self.simple_material_panel.set_simple_mode(simple)
         self.layers_panel.set_simple_mode(simple)
         self.pipeline_panel.setVisible(not simple)
@@ -650,6 +678,8 @@ class MainWindow(QMainWindow):
         if simple or self.right_tabs.currentWidget() is self.simple_inspector:
             self.right_tabs.setCurrentWidget(self.simple_inspector)
         self.property_editor.set_simple_mode(simple)
+        if simple:
+            self._simple_inspector_mode("Browse Library")
         self.simple_material_panel.set_recipe(
             self.document.recipe,
             self._selected_output_id,
@@ -668,6 +698,15 @@ class MainWindow(QMainWindow):
         index = self.output_selector.findData(outputs[0].output_id)
         if index >= 0:
             self.output_selector.setCurrentIndex(index)
+
+    def _simple_inspector_mode(self, mode: str) -> None:
+        """Switch the single Simple Editor inspector between browse and edit context."""
+        browsing = mode != "Edit Layer"
+        self.simple_inspector_pages.setCurrentIndex(0 if browsing else 1)
+        self.browse_operations_button.setCheckable(True)
+        self.edit_layer_button.setCheckable(True)
+        self.browse_operations_button.setChecked(browsing)
+        self.edit_layer_button.setChecked(not browsing)
 
     def _edit_selected_gradient(self) -> None:
         recipe = self.document.recipe
@@ -791,6 +830,95 @@ class MainWindow(QMainWindow):
             return
         self._selected_layer_id, self._selected_instance_id = layer.layer_id, source.instance_id
         self._commit_recipe(recipe, source.instance_id)
+
+    def _add_library_operation(self, preset: LibraryPreset) -> None:
+        recipe = copy.deepcopy(self.document.recipe)
+        output = self._selected_output(recipe)
+        definition = REGISTRY.get(preset.operation_id)
+        source_recipe = operation_recipe(
+            preset, width=recipe.width, height=recipe.height, seed=recipe.seed
+        )
+        source = copy.deepcopy(source_recipe.outputs[0].layers[0].source)
+        source.instance_id = f"source-{uuid.uuid4().hex[:12]}"
+        target_type = output.value_type
+        transforms = []
+        ramp = copy.deepcopy(source_recipe.outputs[0].layers[0].color_ramp)
+        if target_type == "color":
+            if definition.output_type == "scalar":
+                pass
+            elif definition.output_type != "rgba":
+                self.statusBar().showMessage("This operation cannot produce a color output.", 5000)
+                return
+            else:
+                ramp = None
+        elif target_type == "normal":
+            if definition.output_type != "scalar":
+                self.statusBar().showMessage(
+                    "Surface Detail needs a scalar pattern or height field.", 5000
+                )
+                return
+            normal_def = REGISTRY.get("transform.height_to_normal")
+            transforms.append(
+                OperationInstance(
+                    f"transform-{uuid.uuid4().hex[:12]}",
+                    normal_def.identifier,
+                    normal_def.version,
+                    parameters={
+                        spec.identifier: spec.default for spec in normal_def.parameter_specs
+                    },
+                )
+            )
+            ramp = None
+        elif target_type == "scalar":
+            if definition.output_type != "scalar":
+                self.statusBar().showMessage(
+                    "Choose a scalar generator for this material property.", 5000
+                )
+                return
+            ramp = None
+        names = {layer.name for layer in output.layers}
+        base_name = preset.name.split(" · ")[0]
+        layer_name, suffix = base_name, 2
+        while layer_name in names:
+            layer_name = f"{base_name} {suffix}"
+            suffix += 1
+        layer_id = f"layer-{uuid.uuid4().hex[:12]}"
+        layer = LayerRecipe(layer_id, layer_name, source, transforms, color_ramp=ramp)
+        output.layers.append(layer)
+        self._selected_layer_id = layer_id
+        self._selected_instance_id = source.instance_id
+        self._commit_recipe(recipe, source.instance_id)
+        if target_type == "color" and preset.operation_id in {
+            "generator.linear_gradient",
+            "generator.radial_gradient",
+        }:
+            self._edit_gradient_layer(self.document.recipe, self._layer())
+        self._simple_inspector_mode("Edit Layer")
+
+    def _new_from_library_starter(self, name: str) -> None:
+        if not self._confirm_discard():
+            return
+        try:
+            recipe = create_material_starter(name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Material starter unavailable", str(exc))
+            return
+        recipe = self.document.new_document(recipe)
+        self._selected_output_id = next(
+            output.output_id for output in recipe.outputs if output.semantic == "base_color"
+        )
+        self._selected_layer_id = self._layers_for(recipe)[0].layer_id
+        self._selected_instance_id = self._layers_for(recipe)[0].source.instance_id
+        self._selected_control_field_id = "Scale"
+        self.render_session.clear()
+        self._latest_render_result = None
+        self._latest_displayed_request_id = None
+        self.viewport.clear()
+        self._refresh_document(request_render=True, reset_ramp_selection=True)
+        self._simple_inspector_mode("Edit Layer")
+
+    def _simple_add_image(self) -> None:
+        self._simple_operation_added("image")
 
     def _simple_control_changed(
         self, control_name: str, instance_id: str, parameter_id: str, value
@@ -1289,7 +1417,11 @@ class MainWindow(QMainWindow):
         self.gradient_edit_button.setVisible(
             layer.source.operation_id in {"generator.linear_gradient", "generator.radial_gradient"}
         )
-        self.color_ramp_editor.setVisible(True)
+        ramp_applicable = (
+            output.value_type == "color"
+            and pipeline_output_type(layer.source, layer.transforms) == "scalar"
+        )
+        self.color_ramp_editor.setVisible(ramp_applicable)
         self.control_fields_editor.set_affected_by(self._control_field_impact_labels(recipe))
         if refresh_properties:
             self._refresh_property_editor(recipe)
@@ -1776,12 +1908,19 @@ class MainWindow(QMainWindow):
         layer = self._layer()
         self._selected_instance_id = layer.source.instance_id
         self._refresh_document(request_render=False, reset_ramp_selection=True)
+        if self.authoring_mode_combo.currentIndex() == 0:
+            self._simple_inspector_mode("Edit Layer")
         if self._latest_render_result is not None:
             self.viewport.set_mask_preview(
                 (self._latest_render_result.mask_fields or {}).get(layer_id)
             )
 
     def _add_layer(self) -> None:
+        if self.authoring_mode_combo.currentIndex() == 0:
+            self._simple_inspector_mode("Browse Library")
+            self.operation_library.mode.setCurrentText("Patterns")
+            self.operation_library.search.setFocus()
+            return
         recipe = self.document.recipe
         base_name = REGISTRY.get("generator.constant").name
         name = base_name

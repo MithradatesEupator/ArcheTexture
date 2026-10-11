@@ -22,6 +22,7 @@ from archetexture.core.output_dependencies import transitive_output_dependencies
 from archetexture.core.parameters import ControlFieldBinding, ParameterSpec, ParameterType
 from archetexture.core.recipe import OperationInstance
 from archetexture.ui.delayed_help import DelayedHelp
+from archetexture.ui.numeric_control import NumericControl
 
 
 class _DirectSpinBox(QSpinBox):
@@ -44,6 +45,8 @@ class PropertyEditor(QWidget):
     valueChanged = Signal(str, object)
     bindingRequested = Signal(str, object, object)
     assetBrowseRequested = Signal(str, object)
+    editStarted = Signal()
+    editFinished = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -80,25 +83,7 @@ class PropertyEditor(QWidget):
                 spec
                 for spec in definition.parameter_specs
                 if not self._simple_mode
-                or spec.identifier
-                in {
-                    "scale",
-                    "frequency",
-                    "density",
-                    "cells_x",
-                    "cells_y",
-                    "rings",
-                    "threads_x",
-                    "amount",
-                    "strength",
-                    "contrast",
-                    "brightness",
-                    "threshold",
-                    "roughness",
-                    "metallic",
-                    "value",
-                    "color",
-                }
+                or spec.identifier not in {"seed", "offset_x", "offset_y", "rotation"}
             ]
             self._parameter_values = {
                 spec.identifier: instance.parameters.get(spec.identifier, spec.default)
@@ -254,6 +239,12 @@ class PropertyEditor(QWidget):
                 blocked = widget.blockSignals(True)
                 widget.setValue(int(value))
                 widget.blockSignals(blocked)
+            elif isinstance(widget, NumericControl):
+                blocked = widget.blockSignals(True)
+                widget.setValue(
+                    float(value) * 100.0 if spec.type == ParameterType.PERCENT else value
+                )
+                widget.blockSignals(blocked)
             elif spec.type in {
                 ParameterType.FLOAT,
                 ParameterType.ANGLE,
@@ -380,6 +371,20 @@ class PropertyEditor(QWidget):
                     key, combo.currentData()
                 )
             )
+        elif self._simple_mode and spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
+            widget = NumericControl(
+                int(value),
+                minimum=int(spec.min_value if spec.min_value is not None else -(2**31)),
+                maximum=int(spec.max_value if spec.max_value is not None else 2**31 - 1),
+                step=max(1, int(spec.step or 1)),
+                decimals=0,
+                parent=self,
+            )
+            widget.valueChanged.connect(
+                lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
+            )
+            widget.editStarted.connect(self.editStarted)
+            widget.editFinished.connect(self.editFinished)
         elif spec.type in {ParameterType.INTEGER, ParameterType.SEED}:
             widget = _DirectSpinBox()
             widget.setRange(
@@ -391,6 +396,40 @@ class PropertyEditor(QWidget):
             widget.valueChanged.connect(
                 lambda changed, key=spec.identifier: self.valueChanged.emit(key, changed)
             )
+        elif self._simple_mode and spec.type in {
+            ParameterType.FLOAT,
+            ParameterType.ANGLE,
+            ParameterType.PERCENT,
+        }:
+            unit = (
+                "°"
+                if spec.type == ParameterType.ANGLE
+                else "%"
+                if spec.type == ParameterType.PERCENT
+                else ""
+            )
+            initial = float(value) * 100.0 if spec.type == ParameterType.PERCENT else float(value)
+            minimum = float(spec.min_value if spec.min_value is not None else -1e6)
+            maximum = float(spec.max_value if spec.max_value is not None else 1e6)
+            step = float(spec.step or 0.01)
+            if spec.type == ParameterType.PERCENT:
+                minimum, maximum, step = minimum * 100.0, maximum * 100.0, step * 100.0
+            widget = NumericControl(
+                initial,
+                minimum=minimum,
+                maximum=maximum,
+                step=step,
+                decimals=2 if spec.type == ParameterType.PERCENT else 3,
+                unit=unit,
+                parent=self,
+            )
+            widget.valueChanged.connect(
+                lambda changed, key=spec.identifier, kind=spec.type: self.valueChanged.emit(
+                    key, float(changed) / 100.0 if kind == ParameterType.PERCENT else changed
+                )
+            )
+            widget.editStarted.connect(self.editStarted)
+            widget.editFinished.connect(self.editFinished)
         elif spec.type in {ParameterType.FLOAT, ParameterType.ANGLE, ParameterType.PERCENT}:
             widget = _DirectDoubleSpinBox()
             widget.setDecimals(3)

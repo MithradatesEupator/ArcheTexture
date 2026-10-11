@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPixmap
+import copy
+
+import numpy as np
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -15,16 +17,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from archetexture.core.parameters import ControlFieldBinding
+from archetexture.core.assets import RenderContext
+from archetexture.core.fingerprinting import structural_fingerprint
 from archetexture.core.recipe import ProjectRecipe
+from archetexture.render.engine import RenderEngine
+from archetexture.ui.numeric_control import NumericControl
 
 
-class _OpacitySpinBox(QDoubleSpinBox):
-    def wheelEvent(self, event) -> None:
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
+class _LayerPreviewSignals(QObject):
+    completed = Signal(str, str, object)
+
+
+class _LayerPreviewTask(QRunnable):
+    def __init__(self, layer_id, key, recipe, output_id, signals):
+        super().__init__()
+        self.layer_id, self.key, self.recipe = layer_id, key, recipe
+        self.output_id, self.signals = output_id, signals
+
+    def run(self) -> None:
+        try:
+            rgba = (
+                RenderEngine()
+                .render_output(self.recipe, self.output_id, width=64, height=48)
+                .rgba_field
+            )
+            pixels = np.clip(rgba * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            self.signals.completed.emit(self.layer_id, self.key, pixels.tobytes())
+        except Exception as exc:
+            self.signals.completed.emit(self.layer_id, self.key, str(exc))
 
 
 class LayersPanel(QWidget):
@@ -45,11 +65,19 @@ class LayersPanel(QWidget):
     copyToOutputRequested = Signal(str)
     moveToOutputRequested = Signal(str)
     createOutputRequested = Signal(str)
+    opacityEditStarted = Signal()
+    opacityEditFinished = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._syncing = False
         self._known: dict[str, tuple[str, bool]] = {}
+        self._thumbnail_signals = _LayerPreviewSignals(self)
+        self._thumbnail_signals.completed.connect(self._thumbnail_ready)
+        self._thumbnail_cache: dict[str, bytes] = {}
+        self._thumbnail_pending: set[str] = set()
+        self._current_thumbnail_keys: dict[str, str] = {}
+        self._thumbnail_recipes: dict[str, tuple[str, ProjectRecipe, str]] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addWidget(QLabel("LAYERS"))
@@ -93,11 +121,16 @@ class LayersPanel(QWidget):
         self.create_output_button = transfer_menu.addAction("New Output from Layer")
         self.more_layer_actions.setMenu(transfer_menu)
         layout.addWidget(self.more_layer_actions)
-        self.opacity = _OpacitySpinBox()
-        self.opacity.setRange(0.0, 1.0)
-        self.opacity.setDecimals(2)
-        self.opacity.setSingleStep(0.01)
-        self.opacity.setPrefix("Opacity ")
+        self.opacity = NumericControl(
+            1.0,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.01,
+            decimals=2,
+            unit="Opacity",
+            parent=self,
+        )
+        self.opacity.setObjectName("layer-opacity")
         layout.addWidget(self.opacity)
         self.blend = QComboBox()
         self.blend.addItem("Normal", "normal")
@@ -113,6 +146,8 @@ class LayersPanel(QWidget):
         self.move_output_button.triggered.connect(self._move_to_output)
         self.create_output_button.triggered.connect(self._create_output)
         self.opacity.valueChanged.connect(self._opacity_changed)
+        self.opacity.editStarted.connect(self.opacityEditStarted)
+        self.opacity.editFinished.connect(self.opacityEditFinished)
         self.blend.currentIndexChanged.connect(self._blend_changed)
         self.mask_combo = QComboBox(self)
         self.mask_combo.setObjectName("layer-mask-control")
@@ -148,7 +183,9 @@ class LayersPanel(QWidget):
     def set_simple_mode(self, simple: bool) -> None:
         self._simple_mode = simple
         self.pipeline_descriptor.setVisible(not simple)
-        self.add_button.setVisible(not simple)
+        self.add_button.setVisible(True)
+        self.add_button.setText("Add Layer" if simple else "Add")
+        self.add_button.setMinimumHeight(34 if simple else 0)
         self.duplicate_button.setVisible(not simple)
         self.remove_button.setVisible(not simple)
         self.up_button.setVisible(not simple)
@@ -172,7 +209,8 @@ class LayersPanel(QWidget):
     def set_recipe(
         self, recipe: ProjectRecipe, selected_id: str | None, output_id: str | None = None
     ) -> None:
-        layers = recipe.output(output_id).layers if output_id else recipe.layers
+        owner = recipe.output(output_id) if output_id else recipe.outputs[0]
+        layers = owner.layers
         self._syncing = True
         self.layer_list.blockSignals(True)
         self.layer_list.clear()
@@ -181,7 +219,34 @@ class LayersPanel(QWidget):
         for layer in layers:
             item = QListWidgetItem(layer.name)
             item.setData(Qt.ItemDataRole.UserRole, layer.layer_id)
-            item.setIcon(self._layer_thumbnail(layer))
+            thumbnail_recipe = copy.deepcopy(recipe)
+            thumbnail_recipe.width = 64
+            thumbnail_recipe.height = 48
+            thumbnail_owner = thumbnail_recipe.output(owner.output_id)
+            thumbnail_owner.layers = [copy.deepcopy(layer)]
+            key = structural_fingerprint(
+                {
+                    "layer": layer,
+                    "seed": recipe.seed,
+                    "semantic": owner.semantic,
+                    "size": (64, 48),
+                },
+                RenderContext(),
+            )
+            self._current_thumbnail_keys[layer.layer_id] = key
+            cached = self._thumbnail_cache.get(key)
+            if cached is not None:
+                item.setIcon(self._icon_from_bytes(cached))
+                item.setToolTip("Rendered layer preview")
+            else:
+                item.setToolTip("Rendering layer preview…")
+                self._thumbnail_recipes[layer.layer_id] = (
+                    key,
+                    thumbnail_recipe,
+                    owner.output_id,
+                )
+                if self.isVisible():
+                    self._schedule_thumbnail(layer.layer_id)
             item.setFlags(
                 item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsUserCheckable
             )
@@ -232,35 +297,43 @@ class LayersPanel(QWidget):
         self.create_output_button.setEnabled(row >= 0)
 
     @staticmethod
-    def _layer_thumbnail(layer) -> QIcon:
-        pixmap = QPixmap(48, 32)
-        pixmap.fill(QColor("#24272d"))
-        gradient = QLinearGradient(0, 0, 48, 32)
-        if layer.color_ramp is not None and layer.color_ramp.stops:
-            stops = sorted(layer.color_ramp.stops, key=lambda stop: stop.position)
-            for stop in stops:
-                gradient.setColorAt(
-                    min(1.0, max(0.0, float(stop.position))),
-                    QColor.fromRgbF(*stop.color),
-                )
-        elif layer.source.operation_id == "generator.image":
-            gradient.setColorAt(0.0, QColor("#286f83"))
-            gradient.setColorAt(1.0, QColor("#df9855"))
-        else:
-            value = layer.source.parameters.get("value", 0.5)
-            if isinstance(value, ControlFieldBinding):
-                value = 0.5
-            value = float(value)
-            shade = int(min(1.0, max(0.0, value)) * 255)
-            gradient.setColorAt(0.0, QColor(max(0, shade - 55), max(0, shade - 35), shade))
-            gradient.setColorAt(1.0, QColor(shade, shade, shade))
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(gradient)
-        painter.setPen(QColor("#59616c"))
-        painter.drawRoundedRect(0, 0, 47, 31, 4, 4)
-        painter.end()
-        return QIcon(pixmap)
+    def _icon_from_bytes(data: bytes) -> QIcon:
+        image = QImage(data, 64, 48, 64 * 4, QImage.Format.Format_RGBA8888).copy()
+        return QIcon(QPixmap.fromImage(image))
+
+    def _thumbnail_ready(self, layer_id: str, key: str, result) -> None:
+        self._thumbnail_pending.discard(key)
+        if isinstance(result, str):
+            for index in range(self.layer_list.count()):
+                item = self.layer_list.item(index)
+                if item.data(Qt.ItemDataRole.UserRole) == layer_id:
+                    item.setToolTip(f"Layer preview unavailable: {result}")
+            return
+        self._thumbnail_cache[key] = result
+        if self._current_thumbnail_keys.get(layer_id) != key:
+            return
+        for index in range(self.layer_list.count()):
+            item = self.layer_list.item(index)
+            if item.data(Qt.ItemDataRole.UserRole) == layer_id:
+                item.setIcon(self._icon_from_bytes(result))
+                item.setToolTip("Rendered layer preview")
+
+    def _schedule_thumbnail(self, layer_id: str) -> None:
+        pending = self._thumbnail_recipes.get(layer_id)
+        if pending is None:
+            return
+        key, recipe, output_id = pending
+        if key in self._thumbnail_pending or key in self._thumbnail_cache:
+            return
+        self._thumbnail_pending.add(key)
+        QThreadPool.globalInstance().start(
+            _LayerPreviewTask(layer_id, key, recipe, output_id, self._thumbnail_signals)
+        )
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        for layer_id in tuple(self._thumbnail_recipes):
+            self._schedule_thumbnail(layer_id)
 
     def set_pipeline_descriptor(self, descriptor: str) -> None:
         self.pipeline_descriptor.setText(descriptor)

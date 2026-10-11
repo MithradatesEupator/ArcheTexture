@@ -21,6 +21,7 @@ from archetexture.core.operations import OperationType
 from archetexture.core.parameters import ParameterType
 from archetexture.core.recipe import ProjectRecipe
 from archetexture.core.registry import REGISTRY
+from archetexture.ui.numeric_control import NumericControl
 
 
 class _SimpleControlSpinBox(QDoubleSpinBox):
@@ -180,7 +181,7 @@ class SimpleMaterialPanel(QWidget):
         self.guidance.setWordWrap(True)
         self.guidance.setObjectName("simple-material-guidance")
         controls_layout.addWidget(self.guidance)
-        controls_layout.addWidget(QLabel("STARTER CONTROLS"))
+        controls_layout.addWidget(QLabel("MATERIAL CONTROLS"))
         self.tileability = QLabel("Tileability: Unknown", self.controls_widget)
         self.tileability.setObjectName("simple-tileability-status")
         self.tileability.setToolTip(
@@ -189,7 +190,7 @@ class SimpleMaterialPanel(QWidget):
         controls_layout.addWidget(self.tileability)
         self.control_form = QFormLayout()
         controls_layout.addLayout(self.control_form)
-        self.control_spins: dict[str, QDoubleSpinBox] = {}
+        self.control_spins: dict[str, NumericControl] = {}
         self.control_targets: dict[str, tuple[str, str]] = {}
         self._control_parameter_ids: dict[str, str] = {}
         self._control_labels: dict[str, QLabel] = {}
@@ -200,10 +201,13 @@ class SimpleMaterialPanel(QWidget):
         self.set_simple_mode(True)
 
     def set_simple_mode(self, simple: bool) -> None:
-        self.add_operation_button.setVisible(simple)
+        # Operation discovery now lives in the visual browser. This legacy menu
+        # remains available to Advanced Editor integrations only.
+        self.add_operation_button.setVisible(not simple)
         self.source_selector.setVisible(not simple)
         self.source_label.setVisible(not simple)
         self.tileability.setVisible(not simple)
+        self.controls_widget.setVisible(simple)
         if self.controls_widget.layout() is not None:
             for index in range(self.controls_widget.layout().count()):
                 item = self.controls_widget.layout().itemAt(index)
@@ -304,7 +308,20 @@ class SimpleMaterialPanel(QWidget):
             if spin is None or self._control_parameter_ids.get(control_name) != parameter_id:
                 if spin is not None:
                     retired_widgets.extend((spin, self._control_labels.pop(control_name)))
-                spin = _SimpleControlSpinBox(self)
+                spin = NumericControl(
+                    float(value),
+                    minimum=float(spec.min_value if spec.min_value is not None else -1_000_000),
+                    maximum=float(spec.max_value if spec.max_value is not None else 1_000_000),
+                    step=float(
+                        spec.step
+                        if spec.step is not None
+                        else 1
+                        if spec.type == ParameterType.INTEGER
+                        else 0.1
+                    ),
+                    decimals=0 if spec.type == ParameterType.INTEGER else 3,
+                    parent=self,
+                )
                 spin.setObjectName(f"simple-control-{control_name.casefold().replace(' ', '-')}")
                 spin.valueChanged.connect(
                     lambda changed, key=control_name: self._control_changed(key, changed)
@@ -318,20 +335,6 @@ class SimpleMaterialPanel(QWidget):
                 )
                 structure_changed = True
             blocked = spin.blockSignals(True)
-            spin.setRange(
-                float(spec.min_value if spec.min_value is not None else -1_000_000),
-                float(spec.max_value if spec.max_value is not None else 1_000_000),
-            )
-            spin.setDecimals(3 if spec.type == ParameterType.FLOAT else 0)
-            spin.setSingleStep(
-                float(
-                    spec.step
-                    if spec.step is not None
-                    else 1
-                    if spec.type == ParameterType.INTEGER
-                    else 0.1
-                )
-            )
             spin.setValue(value)
             spin.blockSignals(blocked)
             self.control_targets[control_name] = (instance_id, parameter_id)
