@@ -52,6 +52,10 @@ def _qimage_bytes(image: QImage) -> np.ndarray:
     return np.frombuffer(bits, dtype=np.uint8, count=image.sizeInBytes()).copy()
 
 
+def _output_id(recipe, semantic: str) -> str:
+    return next(output.output_id for output in recipe.outputs if output.semantic == semantic)
+
+
 def _edit_color(editor, value: str) -> None:
     def complete_color_dialog() -> None:
         dialog = QApplication.activeModalWidget()
@@ -181,9 +185,10 @@ def main() -> int:
     evidence_dir.mkdir(parents=True, exist_ok=True)
     starter = os.environ.get("ATX30_STARTER", "blank")
     recipe = default_recipe() if starter == "blank" else create_material_starter(starter)
+    base_color_output_id = _output_id(recipe, "base_color")
     if starter == "blank":
         recipe.width = recipe.height = 128
-        recipe.output("base-color").layers = [
+        recipe.output(base_color_output_id).layers = [
             LayerRecipe(
                 "layer-blank-background",
                 "Background",
@@ -238,7 +243,7 @@ def main() -> int:
     )
     _wait_for_render(window)
     assert window.document.history.index == initial_history + 1
-    gradient = window.document.recipe.output("base-color").layers[-1]
+    gradient = window.document.recipe.output(base_color_output_id).layers[-1]
     assert gradient.source.operation_id == "generator.radial_gradient"
     assert len(gradient.color_ramp.stops) >= 3
     assert gradient.opacity < 1.0
@@ -263,7 +268,7 @@ def main() -> int:
     _switch_combo_by_key(window.workspace_mode_combo, Qt.Key.Key_Up)
 
     _add_operation(window, "pattern")
-    pattern_layer = window.document.recipe.output("base-color").layers[-1]
+    pattern_layer = window.document.recipe.output(base_color_output_id).layers[-1]
     pattern_item = next(
         item
         for item in (
@@ -281,16 +286,16 @@ def main() -> int:
         pos=QPoint(row_rect.left() + 9, row_rect.center().y()),
     )
     QApplication.processEvents()
-    assert window.document.recipe.output("base-color").layers[-1].enabled != (
+    assert window.document.recipe.output(base_color_output_id).layers[-1].enabled != (
         initial_pattern_state == Qt.CheckState.Checked
     ), "pattern layer visibility control did not toggle"
     assert window.document.history.index == history_before_toggle + 1
     _wait_for_render(window)
     _capture(window.viewport, evidence_dir / "atx30-pattern-hidden-2d.png")
     window.undo_action.trigger()
-    assert window.document.recipe.output("base-color").layers[-1].enabled
+    assert window.document.recipe.output(base_color_output_id).layers[-1].enabled
     window.redo_action.trigger()
-    assert not window.document.recipe.output("base-color").layers[-1].enabled
+    assert not window.document.recipe.output(base_color_output_id).layers[-1].enabled
 
     recipe_before_switches = window.document.recipe
     selected_before_switches = (window._selected_output_id, window._selected_layer_id)
@@ -395,8 +400,10 @@ def main() -> int:
                 "advanced_simple_preserved_selection": True,
                 "normal_incompatible_edit_rejected_and_restored": True,
                 "3d_material_visible": True,
-                "blank_material_supported": initial_recipe.output("base-color").layers[0].name
-                == "Background",
+                "blank_material_supported": (
+                    starter != "blank"
+                    or initial_recipe.output(base_color_output_id).layers[0].name == "Background"
+                ),
                 "camera_unchanged": camera_after == camera_before,
                 "closed_cleanly": True,
             },
