@@ -1243,7 +1243,11 @@ class MainWindow(QMainWindow):
             resolution = selected_resolution or max(
                 self.document.recipe.width, self.document.recipe.height
             )
-        self._submit_preview(resolution, state, recipe)
+        self._submit_preview(
+            resolution,
+            state,
+            recipe if recipe is not None else self._edit_draft_recipe,
+        )
 
     def _request_preview_when_ready(self) -> None:
         if self._closing or self.workspace_mode_combo.currentData() != "3D Material":
@@ -1645,7 +1649,7 @@ class MainWindow(QMainWindow):
     def _request_render(self, recipe: ProjectRecipe | None = None) -> None:
         if self._closing:
             return
-        recipe = recipe or self.document.recipe
+        recipe = recipe if recipe is not None else self._edit_draft_recipe or self.document.recipe
         render_recipe = copy.deepcopy(recipe)
         selected = next(
             (item for item in render_recipe.outputs if item.output_id == self._selected_output_id),
@@ -2859,6 +2863,8 @@ class MainWindow(QMainWindow):
         self._commit_recipe(recipe, control_field_id=identifier)
 
     def undo(self) -> None:
+        if self._edit_draft_recipe is not None:
+            self._cancel_layer_edit()
         if not self.document.can_undo:
             return
         selected_control_field_id = self._selected_control_field_id
@@ -2868,6 +2874,8 @@ class MainWindow(QMainWindow):
             self._selected_control_field_id = selected_control_field_id
 
     def redo(self) -> None:
+        if self._edit_draft_recipe is not None:
+            self._cancel_layer_edit()
         if not self.document.can_redo:
             return
         selected_control_field_id = self._selected_control_field_id
