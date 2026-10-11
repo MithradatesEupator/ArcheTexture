@@ -11,5 +11,13 @@ dist/
 *.egg-info/
 *.log
 .tmp-atx19/
+.pytest-atx27/
+.tmp-atx27-*/
+.tmp-atx28-*/
+.tmp-atx28-pytest/
+.pytest-atx28/
+.pytest-atx29/
+.tmp-atx29-*/
+pytest-cache-files-*/
 .tmp-atx26-*
 .tmp-atx26-evidence/

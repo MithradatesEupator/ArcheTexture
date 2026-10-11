@@ -611,6 +611,27 @@ def test_history_push_copies_mutable_recipes():
     assert restored.source.parameters["value"] == 0.1
 
 
+def test_history_group_coalesces_continuous_control_edits():
+    from archetexture.core.history import HistoryManager
+
+    initial = constant_recipe(0.1)
+    history = HistoryManager()
+    history.reset(initial)
+    history.begin_group()
+    intermediate = copy.deepcopy(initial)
+    intermediate.source.parameters["value"] = 0.2
+    history.push(intermediate)
+    final = copy.deepcopy(initial)
+    final.source.parameters["value"] = 0.3
+    history.push(final)
+    history.end_group()
+
+    assert len(history.entries) == 2
+    assert history.index == 1
+    assert history.undo().source.parameters["value"] == 0.1
+    assert history.redo().source.parameters["value"] == 0.3
+
+
 class _GateEngine:
     def __init__(self):
         self.started = threading.Event()

@@ -204,6 +204,8 @@ class MainWindow(QMainWindow):
         self.simple_material_panel.channelSelected.connect(self._select_simple_channel)
         self.simple_material_panel.sourceSelected.connect(self._source_changed)
         self.simple_material_panel.controlParameterChanged.connect(self._simple_control_changed)
+        self.simple_material_panel.controlEditStarted.connect(self.document.history.begin_group)
+        self.simple_material_panel.controlEditFinished.connect(self.document.history.end_group)
 
         center_panel = QWidget(self)
         center_layout = QVBoxLayout(center_panel)

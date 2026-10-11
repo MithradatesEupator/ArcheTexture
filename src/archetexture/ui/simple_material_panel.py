@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeyEvent, QWheelEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QDoubleSpinBox,
@@ -19,12 +21,66 @@ from archetexture.core.recipe import ProjectRecipe
 from archetexture.core.registry import REGISTRY
 
 
+class _SimpleControlSpinBox(QDoubleSpinBox):
+    editStarted = Signal()
+    editFinished = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._editing = False
+        self.setKeyboardTracking(False)
+        self.editingFinished.connect(self._finish_edit)
+
+    def _begin_edit(self) -> None:
+        if not self._editing:
+            self._editing = True
+            self.editStarted.emit()
+
+    def _finish_edit(self) -> None:
+        if self._editing:
+            self._editing = False
+            self.editFinished.emit()
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self._begin_edit()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self._finish_edit()
+
+    def mousePressEvent(self, event) -> None:
+        self._begin_edit()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        super().mouseReleaseEvent(event)
+        self._finish_edit()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if event.key() in {Qt.Key.Key_Up, Qt.Key.Key_Down} or event.text().isprintable():
+            self._begin_edit()
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event: QKeyEvent) -> None:
+        super().keyReleaseEvent(event)
+        if event.key() in {Qt.Key.Key_Up, Qt.Key.Key_Down}:
+            self._finish_edit()
+
+    def wheelEvent(self, event: QWheelEvent) -> None:
+        self._begin_edit()
+        super().wheelEvent(event)
+        self._finish_edit()
+
+
 class SimpleMaterialPanel(QWidget):
     """Friendly channel selection and controls backed by the active recipe."""
 
     channelSelected = Signal(str)
     sourceSelected = Signal(str)
     controlParameterChanged = Signal(str, str, str, object)
+    controlEditStarted = Signal()
+    controlEditFinished = Signal()
 
     CHANNELS = (
         ("base_color", "Color"),
@@ -112,6 +168,8 @@ class SimpleMaterialPanel(QWidget):
         controls_layout.addLayout(self.control_form)
         self.control_spins: dict[str, QDoubleSpinBox] = {}
         self.control_targets: dict[str, tuple[str, str]] = {}
+        self._control_parameter_ids: dict[str, str] = {}
+        self._control_labels: dict[str, QLabel] = {}
         controls_layout.addStretch(1)
         layout.addWidget(self.channel_widget)
         layout.addWidget(self.controls_widget)
@@ -151,10 +209,7 @@ class SimpleMaterialPanel(QWidget):
             self.source_selector.setToolTip(REGISTRY.get(str(source_operation_id)).name)
         self.source_selector.blockSignals(False)
 
-        while self.control_form.rowCount():
-            self.control_form.removeRow(0)
-        self.control_spins.clear()
-        self.control_targets.clear()
+        controls: dict[str, tuple[object, str, str, float]] = {}
         for control_name, control in recipe.control_fields.items():
             source = control.source
             definition = REGISTRY.get(source.operation_id)
@@ -182,8 +237,51 @@ class SimpleMaterialPanel(QWidget):
             )
             if spec is None:
                 continue
-            spin = QDoubleSpinBox(self)
-            spin.setObjectName(f"simple-control-{control_name.casefold().replace(' ', '-')}")
+            parameter_id = spec.identifier
+            label = "Pattern Scale" if control_name == "Scale" else control_name
+            controls[control_name] = (
+                spec,
+                source.instance_id,
+                parameter_id,
+                float(source.parameters.get(parameter_id, spec.default)),
+            )
+
+        # Recipe commits happen synchronously inside valueChanged. Keep the active
+        # input widget alive while its own mouse/key event unwinds; reconcile rows
+        # by control and parameter identity instead of clearing the form each time.
+        structure_changed = (
+            set(controls) != set(self.control_spins)
+            or any(
+                self._control_parameter_ids.get(name) != control[2]
+                for name, control in controls.items()
+            )
+            or any(self.control_spins.get(name) is None for name in controls)
+        )
+        if structure_changed:
+            while self.control_form.rowCount():
+                self.control_form.takeRow(0)
+
+        previous_focus = QApplication.focusWidget()
+        retired_widgets: list[QWidget] = []
+        for control_name, (spec, instance_id, parameter_id, value) in controls.items():
+            spin = self.control_spins.get(control_name)
+            if spin is None or self._control_parameter_ids.get(control_name) != parameter_id:
+                if spin is not None:
+                    retired_widgets.extend((spin, self._control_labels.pop(control_name)))
+                spin = _SimpleControlSpinBox(self)
+                spin.setObjectName(f"simple-control-{control_name.casefold().replace(' ', '-')}")
+                spin.valueChanged.connect(
+                    lambda changed, key=control_name: self._control_changed(key, changed)
+                )
+                spin.editStarted.connect(self.controlEditStarted)
+                spin.editFinished.connect(self.controlEditFinished)
+                self.control_spins[control_name] = spin
+                self._control_parameter_ids[control_name] = parameter_id
+                self._control_labels[control_name] = QLabel(
+                    "Pattern Scale" if control_name == "Scale" else control_name, self
+                )
+                structure_changed = True
+            blocked = spin.blockSignals(True)
             spin.setRange(
                 float(spec.min_value if spec.min_value is not None else -1_000_000),
                 float(spec.max_value if spec.max_value is not None else 1_000_000),
@@ -198,15 +296,26 @@ class SimpleMaterialPanel(QWidget):
                     else 0.1
                 )
             )
-            parameter_id = spec.identifier
-            spin.setValue(float(source.parameters.get(parameter_id, spec.default)))
-            label = "Pattern Scale" if control_name == "Scale" else control_name
-            self.control_form.addRow(label, spin)
-            self.control_spins[control_name] = spin
-            self.control_targets[control_name] = (source.instance_id, parameter_id)
-            spin.valueChanged.connect(
-                lambda value, key=control_name: self._control_changed(key, value)
-            )
+            spin.setValue(value)
+            spin.blockSignals(blocked)
+            self.control_targets[control_name] = (instance_id, parameter_id)
+
+        removed_names = set(self.control_spins) - set(controls)
+        for name in removed_names:
+            retired_widgets.extend((self.control_spins.pop(name), self._control_labels.pop(name)))
+            self.control_targets.pop(name, None)
+            self._control_parameter_ids.pop(name, None)
+
+        for widget in retired_widgets:
+            widget.deleteLater()
+
+        if structure_changed:
+            for control_name in controls:
+                self.control_form.addRow(
+                    self._control_labels[control_name], self.control_spins[control_name]
+                )
+        if previous_focus in self.control_spins.values():
+            previous_focus.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def set_tileability(self, status: str, explanation: str) -> None:
         label = "Tileable" if status in {"Yes", "No"} else "Tileability"

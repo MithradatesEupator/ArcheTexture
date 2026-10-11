@@ -5,7 +5,7 @@ import copy
 import pytest
 from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDoubleSpinBox
 
 from archetexture.core.defaults import default_recipe
 from archetexture.core.material_starters import MATERIAL_STARTERS, create_material_starter
@@ -79,12 +79,16 @@ def test_simple_starter_controls_edit_the_existing_control_field(qtbot):
     initial_index = window.document.history.index
     initial_scale = recipe.control_fields["Scale"].source.parameters["cells_x"]
     scale = window.simple_material_panel.control_spins["Scale"]
+    destroyed = []
+    scale.destroyed.connect(lambda *_: destroyed.append(True))
 
     scale.setValue(initial_scale + 1)
 
     edited = window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
     assert edited == pytest.approx(initial_scale + 1)
     assert window.document.history.index == initial_index + 1
+    assert window.simple_material_panel.control_spins["Scale"] is scale
+    assert not destroyed
     assert window.document.dirty
     assert window.authoring_mode_combo.currentIndex() == 0
     window.close()
@@ -97,14 +101,40 @@ def test_default_material_exposes_recipe_backed_simple_controls(qtbot):
     assert set(window.simple_material_panel.control_spins) >= {"Scale", "Wear"}
     initial_index = window.document.history.index
     initial_scale = window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
+    scale = window.simple_material_panel.control_spins["Scale"]
+    destroyed = []
+    scale.destroyed.connect(lambda *_: destroyed.append(True))
 
-    window.simple_material_panel.control_spins["Scale"].setValue(initial_scale + 1)
+    scale.setValue(initial_scale + 1)
 
     assert (
         window.document.recipe.control_fields["Scale"].source.parameters["cells_x"]
         == initial_scale + 1
     )
     assert window.document.history.index == initial_index + 1
+    assert window.document.dirty
+    assert window.simple_material_panel.control_spins["Scale"] is scale
+    assert not destroyed
+    window.close()
+
+
+def test_advanced_parameter_refresh_preserves_active_spinbox(qtbot):
+    window = MainWindow(create_material_starter("Wood Grain"))
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    window.authoring_mode_combo.setCurrentIndex(1)
+    spin = window.property_editor.findChild(QDoubleSpinBox, "parameter-persistence")
+    assert spin is not None
+    destroyed = []
+    spin.destroyed.connect(lambda *_: destroyed.append(True))
+    initial = spin.value()
+    history_index = window.document.history.index
+
+    spin.setValue(initial + 0.1)
+
+    assert window.property_editor.findChild(QDoubleSpinBox, "parameter-persistence") is spin
+    assert not destroyed
+    assert window.document.history.index == history_index + 1
     assert window.document.dirty
     window.close()
 

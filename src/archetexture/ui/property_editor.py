@@ -55,6 +55,8 @@ class PropertyEditor(QWidget):
         self._cycle_targets: set[str] = set()
         self._project_path = None
         self._simple_mode = False
+        self._operation_signature = None
+        self._parameter_values: dict[str, object] = {}
         self._layout = QVBoxLayout(self)
         self._heading = QLabel("Properties")
         heading_font = QFont(self._heading.font())
@@ -71,7 +73,63 @@ class PropertyEditor(QWidget):
         instance: OperationInstance | None,
         definition: OperationDefinition | None,
     ) -> None:
+        visible_specs = []
+        signature = None
+        if instance is not None and definition is not None:
+            visible_specs = [
+                spec
+                for spec in definition.parameter_specs
+                if not self._simple_mode
+                or spec.identifier
+                in {
+                    "scale",
+                    "frequency",
+                    "density",
+                    "cells_x",
+                    "cells_y",
+                    "rings",
+                    "threads_x",
+                    "amount",
+                    "strength",
+                    "contrast",
+                    "brightness",
+                    "threshold",
+                    "roughness",
+                    "metallic",
+                    "value",
+                    "color",
+                }
+            ]
+            self._parameter_values = {
+                spec.identifier: instance.parameters.get(spec.identifier, spec.default)
+                for spec in visible_specs
+            }
+            signature = (
+                instance.instance_id,
+                definition.identifier,
+                self._simple_mode,
+                tuple(
+                    (
+                        spec.identifier,
+                        spec.type,
+                        type(instance.parameters.get(spec.identifier, spec.default)),
+                    )
+                    for spec in visible_specs
+                ),
+                (
+                    type(instance.influence)
+                    if definition.operation_type == OperationType.TRANSFORM
+                    else None
+                ),
+            )
+            if signature == self._operation_signature and self._sync_existing_values(
+                instance, definition, visible_specs
+            ):
+                self._heading.setText(definition.name)
+                return
+
         self._clear_form()
+        self._operation_signature = signature
         if instance is None or definition is None:
             self._heading.setText("Properties")
             self._form.addRow(QLabel("Select a source or transform."))
@@ -83,26 +141,7 @@ class PropertyEditor(QWidget):
         self._heading.setText(definition.name)
         operation_id = definition.identifier
         mode = instance.parameters.get("mode", "Direct")
-        for spec in definition.parameter_specs:
-            if self._simple_mode and spec.identifier not in {
-                "scale",
-                "frequency",
-                "density",
-                "cells_x",
-                "cells_y",
-                "rings",
-                "threads_x",
-                "amount",
-                "strength",
-                "contrast",
-                "brightness",
-                "threshold",
-                "roughness",
-                "metallic",
-                "value",
-                "color",
-            }:
-                continue
+        for spec in visible_specs:
             value = instance.parameters.get(spec.identifier, spec.default)
             widget = self._make_widget(spec, value)
             if spec.description:
@@ -160,6 +199,95 @@ class PropertyEditor(QWidget):
             DelayedHelp.register(influence_widget, influence_spec.description)
             self._form.addRow("Influence", influence_widget)
 
+    def _sync_existing_values(self, instance, definition, specs) -> bool:
+        for spec in specs:
+            value = instance.parameters.get(spec.identifier, spec.default)
+            widget = self.findChild(QWidget, f"parameter-{spec.identifier}")
+            if widget is None:
+                return False
+            if isinstance(value, ControlFieldBinding):
+                label = widget.findChild(QLabel)
+                if label is None:
+                    return False
+                label.setText(f"Control field: {value.source_id}")
+                edit_button = widget.findChild(QPushButton, f"edit-binding-{spec.identifier}")
+                if edit_button is not None:
+                    edit_button.setEnabled(bool(self._control_fields))
+            elif spec.type == ParameterType.IMAGE_ASSET:
+                label = widget.findChild(QLabel)
+                button = widget.findChild(QPushButton)
+                if label is None or button is None:
+                    return False
+                path = value.path if isinstance(value, AssetReference) else ""
+                missing = bool(path) and not RenderContext(self._project_path).exists(value)
+                label.setText(("Missing · " if missing else "") + (path or "No image selected"))
+                label.setToolTip(path)
+                button.setText("Relink…" if missing else "Replace…" if path else "Browse…")
+            elif spec.type == ParameterType.BOOLEAN and isinstance(widget, QCheckBox):
+                blocked = widget.blockSignals(True)
+                widget.setChecked(bool(value))
+                widget.blockSignals(blocked)
+            elif spec.type == ParameterType.ENUM and isinstance(widget, QComboBox):
+                blocked = widget.blockSignals(True)
+                index = widget.findText(str(value))
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+                widget.blockSignals(blocked)
+            elif spec.type == ParameterType.MATERIAL_OUTPUT and isinstance(widget, QComboBox):
+                blocked = widget.blockSignals(True)
+                widget.clear()
+                for output in self._material_outputs:
+                    if output.output_id == self._current_output_id:
+                        continue
+                    if output.output_id in self._cycle_targets:
+                        continue
+                    widget.addItem(f"{output.name} · {output.value_type.title()}", output.output_id)
+                index = widget.findData(value)
+                if index < 0:
+                    widget.addItem("Missing output" if value else "Select an output", value)
+                    index = widget.count() - 1
+                widget.setCurrentIndex(index)
+                widget.blockSignals(blocked)
+            elif spec.type in {ParameterType.INTEGER, ParameterType.SEED} and isinstance(
+                widget, QSpinBox
+            ):
+                blocked = widget.blockSignals(True)
+                widget.setValue(int(value))
+                widget.blockSignals(blocked)
+            elif spec.type in {
+                ParameterType.FLOAT,
+                ParameterType.ANGLE,
+                ParameterType.PERCENT,
+            } and isinstance(widget, QDoubleSpinBox):
+                blocked = widget.blockSignals(True)
+                widget.setValue(float(value))
+                widget.blockSignals(blocked)
+            elif spec.type == ParameterType.COLOR and isinstance(widget, QPushButton):
+                self._paint_color_button(widget, self._color(value))
+            elif spec.type == ParameterType.POSITION_2D:
+                spins = widget.findChildren(QDoubleSpinBox)
+                if len(spins) != len(value):
+                    return False
+                for spin, component in zip(spins, value, strict=True):
+                    blocked = spin.blockSignals(True)
+                    spin.setValue(float(component))
+                    spin.blockSignals(blocked)
+            else:
+                return False
+            for button in self.findChildren(QPushButton, f"modulate-{spec.identifier}"):
+                button.setEnabled(bool(self._control_fields))
+        if definition.operation_type == OperationType.TRANSFORM:
+            influence = self.findChild(QDoubleSpinBox, "parameter-influence")
+            if influence is None:
+                return False
+            blocked = influence.blockSignals(True)
+            influence.setValue(instance.influence)
+            influence.blockSignals(blocked)
+            modulate = self.findChild(QPushButton, "modulate-influence")
+            if modulate is not None:
+                modulate.setEnabled(bool(self._control_fields))
+        return True
+
     def _clear_form(self) -> None:
         while self._form.rowCount():
             self._form.removeRow(0)
@@ -180,8 +308,10 @@ class PropertyEditor(QWidget):
             edit.setObjectName(f"edit-binding-{spec.identifier}")
             edit.setEnabled(bool(self._control_fields))
             edit.clicked.connect(
-                lambda _checked=False, key=spec.identifier, parameter=spec, current=value: (
-                    self.bindingRequested.emit(key, parameter, current)
+                lambda _checked=False, key=spec.identifier, parameter=spec: (
+                    self.bindingRequested.emit(
+                        key, parameter, self._parameter_values.get(key, value)
+                    )
                 )
             )
             action_row.addWidget(edit)
@@ -208,8 +338,8 @@ class PropertyEditor(QWidget):
             label.setToolTip(path)
             button = QPushButton("Relink…" if missing else "Replace…" if path else "Browse…")
             button.clicked.connect(
-                lambda _checked=False, key=spec.identifier, ref=value: (
-                    self.assetBrowseRequested.emit(key, ref)
+                lambda _checked=False, key=spec.identifier: self.assetBrowseRequested.emit(
+                    key, self._parameter_values.get(key)
                 )
             )
             row.addWidget(label, 1)
