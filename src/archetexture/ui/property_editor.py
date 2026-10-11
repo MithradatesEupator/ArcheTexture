@@ -83,7 +83,7 @@ class PropertyEditor(QWidget):
                 spec
                 for spec in definition.parameter_specs
                 if not self._simple_mode
-                or spec.identifier not in {"seed", "offset_x", "offset_y", "rotation"}
+                or spec.identifier not in {"offset_x", "offset_y", "rotation"}
             ]
             self._parameter_values = {
                 spec.identifier: instance.parameters.get(spec.identifier, spec.default)

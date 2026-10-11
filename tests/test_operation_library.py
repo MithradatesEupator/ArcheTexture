@@ -3,9 +3,8 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog
 
 from archetexture.core.material_starters import MATERIAL_STARTERS, create_material_starter
 from archetexture.core.pipeline_types import pipeline_output_type
@@ -169,18 +168,11 @@ def test_gradient_library_action_uses_the_existing_gradient_editor(qtbot):
     key = next(iter(window.operation_library._cards))
     qtbot.mouseClick(window.operation_library._cards[key][1], Qt.MouseButton.LeftButton)
     assert window.operation_library.action.isEnabled()
-    QTimer.singleShot(
-        250,
-        lambda: (
-            QApplication.activeModalWidget().accept()
-            if isinstance(QApplication.activeModalWidget(), QDialog)
-            else None
-        ),
-    )
+    window._select_simple_channel("base_color")
     qtbot.mouseClick(window.operation_library.action, Qt.MouseButton.LeftButton)
-    assert any(
-        layer.source.operation_id == "generator.linear_gradient"
-        for output in window.document.recipe.outputs
-        for layer in output.layers
-    )
+    layer = window._layer()
+    assert layer.source.operation_id == "generator.linear_gradient"
+    assert layer.color_ramp is not None
+    assert window.simple_inspector_pages.currentWidget() is window.simple_edit_page
+    assert window.color_ramp_editor.isVisible()
     window.close()

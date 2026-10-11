@@ -67,6 +67,7 @@ class LayersPanel(QWidget):
     createOutputRequested = Signal(str)
     opacityEditStarted = Signal()
     opacityEditFinished = Signal()
+    thumbnailReady = Signal(str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -191,7 +192,7 @@ class LayersPanel(QWidget):
         self.up_button.setVisible(not simple)
         self.down_button.setVisible(not simple)
         self.more_layer_actions.setVisible(not simple)
-        self.opacity.setVisible(True)
+        self.opacity.setVisible(not simple)
         self.blend.setVisible(not simple)
         self.mask_combo.setVisible(not simple)
         self.mask_title.setVisible(not simple)
@@ -315,8 +316,12 @@ class LayersPanel(QWidget):
         for index in range(self.layer_list.count()):
             item = self.layer_list.item(index)
             if item.data(Qt.ItemDataRole.UserRole) == layer_id:
-                item.setIcon(self._icon_from_bytes(result))
+                pixmap = QPixmap.fromImage(
+                    QImage(result, 64, 48, 64 * 4, QImage.Format.Format_RGBA8888).copy()
+                )
+                item.setIcon(QIcon(pixmap))
                 item.setToolTip("Rendered layer preview")
+                self.thumbnailReady.emit(layer_id, pixmap)
 
     def _schedule_thumbnail(self, layer_id: str) -> None:
         pending = self._thumbnail_recipes.get(layer_id)

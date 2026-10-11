@@ -8,11 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPalette
+from PySide6.QtGui import QActionGroup, QColor, QKeySequence, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QColorDialog,
     QComboBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -31,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from archetexture import __version__
-from archetexture.color.ramp import ColorRamp
+from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.assets import AssetReference, RenderContext
 from archetexture.core.document import DocumentController
 from archetexture.core.fingerprinting import structural_fingerprint
@@ -71,6 +73,7 @@ from archetexture.ui.export_texture_set_dialog import ExportTextureSetDialog
 from archetexture.ui.gradient_editor import GradientEditorDialog
 from archetexture.ui.layers_panel import LayersPanel
 from archetexture.ui.material_starter_dialog import MaterialStarterDialog
+from archetexture.ui.numeric_control import NumericControl
 from archetexture.ui.operation_library import LibraryPreset, OperationLibraryPanel, operation_recipe
 from archetexture.ui.pipeline_panel import PipelinePanel
 from archetexture.ui.preview_controls import PreviewControls
@@ -110,6 +113,7 @@ class MainWindow(QMainWindow):
         self._latest_render_output_id: str | None = None
         self._rendering_output_id: str | None = None
         self._latest_displayed_request_id: int | None = None
+        self._edit_draft_recipe: ProjectRecipe | None = None
         self.preview_binding = PreviewMaterialBinding()
         self._preview_request_id = 0
         self._latest_preview_signature: str | None = None
@@ -196,6 +200,7 @@ class MainWindow(QMainWindow):
         self.layers_panel.duplicateRequested.connect(self._duplicate_layer)
         self.layers_panel.renameRequested.connect(self._rename_layer)
         self.layers_panel.selectionChanged.connect(self._select_layer)
+        self.layers_panel.thumbnailReady.connect(self._selected_layer_thumbnail_ready)
         self.layers_panel.enabledChanged.connect(self._layer_enabled)
         self.layers_panel.moved.connect(self._layer_moved)
         self.layers_panel.opacityChanged.connect(self._layer_opacity_changed)
@@ -230,8 +235,8 @@ class MainWindow(QMainWindow):
         view_row.addWidget(QLabel("Workspace:"))
         self.workspace_mode_combo = QComboBox(center_panel)
         self.workspace_mode_combo.setObjectName("workspace-mode-selector")
-        self.workspace_mode_combo.addItem("2D Texture", "2D Texture")
-        self.workspace_mode_combo.addItem("3D Material", "3D Material")
+        self.workspace_mode_combo.addItem("Edited Property - 2D", "2D Texture")
+        self.workspace_mode_combo.addItem("Combined Material - 3D", "3D Material")
         view_row.addWidget(self.workspace_mode_combo)
         self.edit_output_label = QLabel("Edit Output:", center_panel)
         view_row.addWidget(self.edit_output_label)
@@ -286,6 +291,10 @@ class MainWindow(QMainWindow):
         self.preview_mode_indicator.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_mode_indicator.setVisible(False)
         center_layout.addWidget(self.preview_mode_indicator)
+        self.preview_content_label = QLabel("EDITED PROPERTY", center_panel)
+        self.preview_content_label.setObjectName("preview-content-label")
+        self.preview_content_label.setContentsMargins(10, 2, 8, 2)
+        center_layout.addWidget(self.preview_content_label)
         from PySide6.QtWidgets import QStackedWidget
 
         self.workspace_stack = QStackedWidget(center_panel)
@@ -320,7 +329,7 @@ class MainWindow(QMainWindow):
         inspector_modes = QHBoxLayout()
         self.browse_operations_button = QPushButton("Browse Library", self.simple_inspector)
         self.browse_operations_button.setObjectName("browse-operation-library")
-        self.edit_layer_button = QPushButton("Edit Layer", self.simple_inspector)
+        self.edit_layer_button = QPushButton("Edit Existing Layer", self.simple_inspector)
         self.edit_layer_button.setObjectName("edit-selected-layer")
         inspector_modes.addWidget(self.browse_operations_button)
         inspector_modes.addWidget(self.edit_layer_button)
@@ -330,9 +339,71 @@ class MainWindow(QMainWindow):
         self.simple_edit_page = QWidget(self.simple_inspector_pages)
         edit_page_layout = QVBoxLayout(self.simple_edit_page)
         edit_page_layout.setContentsMargins(0, 0, 0, 0)
+        context_header = QHBoxLayout()
+        self.layer_context_thumbnail = QLabel("Layer preview", self.simple_edit_page)
+        self.layer_context_thumbnail.setObjectName("context-layer-thumbnail")
+        self.layer_context_thumbnail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layer_context_thumbnail.setFixedSize(148, 92)
+        self.layer_context_thumbnail.setScaledContents(True)
+        context_header.addWidget(self.layer_context_thumbnail, 0, Qt.AlignmentFlag.AlignTop)
+        context_text = QVBoxLayout()
         self.inspector_heading = QLabel("Selected Layer", self.simple_inspector)
         self.inspector_heading.setObjectName("simple-inspector-heading")
-        edit_page_layout.addWidget(self.inspector_heading)
+        context_text.addWidget(self.inspector_heading)
+        self.layer_context_description = QLabel(self.simple_edit_page)
+        self.layer_context_description.setObjectName("context-layer-description")
+        self.layer_context_description.setWordWrap(True)
+        context_text.addWidget(self.layer_context_description)
+        context_header.addLayout(context_text, 1)
+        edit_page_layout.addLayout(context_header)
+        self.context_color_button = QPushButton("Choose Solid Color...", self.simple_edit_page)
+        self.context_color_button.setObjectName("context-solid-color")
+        self.context_color_button.clicked.connect(self._choose_context_solid_color)
+        edit_page_layout.addWidget(self.context_color_button)
+        context_form = QFormLayout()
+        self.context_opacity = NumericControl(
+            1.0,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.01,
+            decimals=2,
+            unit="Opacity",
+            parent=self.simple_edit_page,
+        )
+        self.context_opacity.setObjectName("context-layer-opacity")
+        self.context_blend = QComboBox(self.simple_edit_page)
+        self.context_blend.setObjectName("context-layer-blend")
+        for label, value in (
+            ("Normal", "normal"),
+            ("Multiply", "multiply"),
+            ("Screen", "screen"),
+            ("Add", "add"),
+        ):
+            self.context_blend.addItem(label, value)
+        context_form.addRow("Opacity", self.context_opacity)
+        context_form.addRow("Blend", self.context_blend)
+        self.context_form = context_form
+        edit_page_layout.addLayout(context_form)
+        self.context_opacity.valueChanged.connect(self._context_layer_opacity_changed)
+        self.context_opacity.editStarted.connect(self.document.history.begin_group)
+        self.context_opacity.editFinished.connect(self.document.history.end_group)
+        self.context_blend.currentIndexChanged.connect(self._context_layer_blend_changed)
+        self.layer_edit_status = QLabel("Changes preview live and stay reversible until applied.")
+        self.layer_edit_status.setObjectName("context-edit-status")
+        self.layer_edit_status.setWordWrap(True)
+        edit_page_layout.addWidget(self.layer_edit_status)
+        transaction_buttons = QHBoxLayout()
+        self.apply_layer_edit_button = QPushButton("Apply", self.simple_edit_page)
+        self.apply_layer_edit_button.setObjectName("apply-layer-edit")
+        self.cancel_layer_edit_button = QPushButton("Cancel", self.simple_edit_page)
+        self.cancel_layer_edit_button.setObjectName("cancel-layer-edit")
+        self.apply_layer_edit_button.setEnabled(False)
+        self.cancel_layer_edit_button.setEnabled(False)
+        transaction_buttons.addWidget(self.cancel_layer_edit_button)
+        transaction_buttons.addWidget(self.apply_layer_edit_button)
+        edit_page_layout.addLayout(transaction_buttons)
+        self.apply_layer_edit_button.clicked.connect(self._apply_layer_edit)
+        self.cancel_layer_edit_button.clicked.connect(self._cancel_layer_edit)
         self.gradient_edit_button = QPushButton("Edit Gradient…", self.simple_inspector)
         self.gradient_edit_button.setObjectName("edit-gradient")
         self.gradient_edit_button.clicked.connect(self._edit_selected_gradient)
@@ -342,6 +413,7 @@ class MainWindow(QMainWindow):
         edit_page_layout.addWidget(self.property_editor_scroll, 1)
         self.color_ramp_editor.setParent(self.simple_inspector)
         edit_page_layout.addWidget(self.color_ramp_editor, 0)
+        self.context_opacity.setValue(1.0)
         self.simple_inspector_pages.addWidget(self.simple_edit_page)
         simple_inspector_layout.addWidget(self.simple_inspector_pages, 1)
         self.browse_operations_button.clicked.connect(
@@ -629,6 +701,9 @@ class MainWindow(QMainWindow):
 
     def _workspace_mode_changed(self, index: int) -> None:
         is_3d = self.workspace_mode_combo.itemData(index) == "3D Material"
+        self.preview_content_label.setText(
+            "COMBINED MATERIAL - 3D" if is_3d else "EDITED PROPERTY - 2D"
+        )
         self.preview_mode_label.hide()
         self.preview_mode_indicator.setVisible(is_3d)
         self.viewport_mode_label.setVisible(not is_3d)
@@ -656,6 +731,8 @@ class MainWindow(QMainWindow):
 
     def _authoring_mode_changed(self, index: int) -> None:
         simple = index == 0
+        if not simple:
+            self._cancel_layer_edit()
         self.simple_material_panel.channel_widget.setVisible(simple)
         self.simple_material_panel.set_simple_mode(simple)
         self.layers_panel.set_simple_mode(simple)
@@ -666,6 +743,22 @@ class MainWindow(QMainWindow):
         self.manage_outputs_button.setVisible(not simple)
         self.inspector_heading.setVisible(simple)
         self.property_editor_scroll.setVisible(simple)
+        for widget in (
+            self.layer_context_thumbnail,
+            self.inspector_heading,
+            self.layer_context_description,
+            self.context_color_button,
+            self.context_opacity,
+            self.context_blend,
+            self.layer_edit_status,
+            self.apply_layer_edit_button,
+            self.cancel_layer_edit_button,
+        ):
+            widget.setVisible(simple)
+        for field in (self.context_opacity, self.context_blend):
+            label = self.context_form.labelForField(field)
+            if label is not None:
+                label.setVisible(simple)
         self.gradient_edit_button.setVisible(
             simple
             and self._layer().source.operation_id
@@ -702,6 +795,8 @@ class MainWindow(QMainWindow):
     def _simple_inspector_mode(self, mode: str) -> None:
         """Switch the single Simple Editor inspector between browse and edit context."""
         browsing = mode != "Edit Layer"
+        if browsing:
+            self._cancel_layer_edit()
         self.simple_inspector_pages.setCurrentIndex(0 if browsing else 1)
         self.browse_operations_button.setCheckable(True)
         self.edit_layer_button.setCheckable(True)
@@ -888,11 +983,6 @@ class MainWindow(QMainWindow):
         self._selected_layer_id = layer_id
         self._selected_instance_id = source.instance_id
         self._commit_recipe(recipe, source.instance_id)
-        if target_type == "color" and preset.operation_id in {
-            "generator.linear_gradient",
-            "generator.radial_gradient",
-        }:
-            self._edit_gradient_layer(self.document.recipe, self._layer())
         self._simple_inspector_mode("Edit Layer")
 
     def _new_from_library_starter(self, name: str) -> None:
@@ -1305,6 +1395,7 @@ class MainWindow(QMainWindow):
         output_id = self.output_selector.itemData(index)
         if not output_id or output_id == self._selected_output_id:
             return
+        self._cancel_layer_edit()
         self._selected_output_id = str(output_id)
         output = self._selected_output()
         self._selected_layer_id = output.layers[0].layer_id if output.layers else ""
@@ -1414,12 +1505,52 @@ class MainWindow(QMainWindow):
         )
         self.color_ramp_editor.set_context_name(layer.name)
         self.inspector_heading.setText(f"{layer.name} · {output.name}")
+        source_definition = REGISTRY.get(layer.source.operation_id)
+        self.layer_context_description.setText(
+            f"{source_definition.name} · {source_definition.description}"
+        )
+        parameter_names = [spec.name for spec in source_definition.parameter_specs]
+        if parameter_names:
+            self.layer_context_description.setToolTip(
+                "Editable pattern settings: " + ", ".join(parameter_names)
+            )
+        else:
+            self.layer_context_description.setToolTip(source_definition.description)
+        thumbnail_item = next(
+            (
+                self.layers_panel.layer_list.item(index)
+                for index in range(self.layers_panel.layer_list.count())
+                if self.layers_panel.layer_list.item(index).data(Qt.ItemDataRole.UserRole)
+                == layer.layer_id
+            ),
+            None,
+        )
+        if thumbnail_item is not None and not thumbnail_item.icon().isNull():
+            self.layer_context_thumbnail.setPixmap(thumbnail_item.icon().pixmap(148, 92))
+            self.layer_context_thumbnail.setToolTip("Rendered preview of the selected layer")
+        else:
+            self.layer_context_thumbnail.setPixmap(QPixmap())
+            self.layer_context_thumbnail.setText("Rendering layer preview…")
+            self.layer_context_thumbnail.setToolTip("The selected layer is being rendered.")
+        opacity_blocked = self.context_opacity.blockSignals(True)
+        self.context_opacity.setValue(layer.opacity)
+        self.context_opacity.blockSignals(opacity_blocked)
+        blend_blocked = self.context_blend.blockSignals(True)
+        self.context_blend.setCurrentIndex(max(0, self.context_blend.findData(layer.blend_mode)))
+        self.context_blend.blockSignals(blend_blocked)
+        self.context_opacity.setEnabled(self.authoring_mode_combo.currentIndex() == 0)
+        self.context_blend.setEnabled(self.authoring_mode_combo.currentIndex() == 0)
+        self.context_color_button.setVisible(
+            self.authoring_mode_combo.currentIndex() == 0
+            and output.value_type == "color"
+            and layer.source.operation_id == "generator.constant"
+        )
         self.gradient_edit_button.setVisible(
             layer.source.operation_id in {"generator.linear_gradient", "generator.radial_gradient"}
         )
-        ramp_applicable = (
-            output.value_type == "color"
-            and pipeline_output_type(layer.source, layer.transforms) == "scalar"
+        ramp_applicable = output.value_type == "color" and (
+            layer.color_ramp is not None
+            or pipeline_output_type(layer.source, layer.transforms) == "scalar"
         )
         self.color_ramp_editor.setVisible(ramp_applicable)
         self.control_fields_editor.set_affected_by(self._control_field_impact_labels(recipe))
@@ -1429,6 +1560,17 @@ class MainWindow(QMainWindow):
         if request_render:
             self._request_render()
             self._request_preview()
+
+    def _selected_layer_thumbnail_ready(self, layer_id: str, pixmap: QPixmap) -> None:
+        if layer_id == self._selected_layer_id:
+            self.layer_context_thumbnail.setPixmap(
+                pixmap.scaled(
+                    self.layer_context_thumbnail.size(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            self.layer_context_thumbnail.setToolTip("Rendered preview of the selected layer")
 
     def _update_tileability_status(self, output_id: str) -> None:
         recipe_status = recipe_seamlessness(self.document.recipe, output_id=output_id)
@@ -1526,11 +1668,21 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Render request failed: {exc}")
 
     def _color_ramp_changed(self, color_ramp: ColorRamp | None) -> None:
+        if self._uses_context_edit_transaction():
+            self._stage_context_layer_edit(
+                lambda _recipe, layer: setattr(layer, "color_ramp", color_ramp)
+            )
+            return
         recipe = self.document.recipe
         self._layer(recipe).color_ramp = color_ramp
         self._commit_recipe(recipe, self._selected_instance_id)
 
     def _preview_color_ramp(self, color_ramp: ColorRamp) -> None:
+        if self._uses_context_edit_transaction():
+            self._stage_context_layer_edit(
+                lambda _recipe, layer: setattr(layer, "color_ramp", color_ramp)
+            )
+            return
         recipe = self.document.recipe
         self._layer(recipe).color_ramp = color_ramp
         self._request_render(recipe)
@@ -1546,12 +1698,19 @@ class MainWindow(QMainWindow):
         ):
             return
         if outcome.error is not None:
-            self.viewport.set_error(str(outcome.error))
-            self.statusBar().showMessage(f"Render failed: {outcome.error}")
+            if self._edit_draft_recipe is None:
+                self.viewport.set_error(str(outcome.error))
+            self.statusBar().showMessage(
+                f"Preview not updated; last valid image retained: {outcome.error}", 8000
+            )
             return
         if outcome.result is None:
-            self.viewport.set_error("Render returned no result.")
-            self.statusBar().showMessage("Render failed")
+            if self._edit_draft_recipe is None:
+                self.viewport.set_error("Render returned no result.")
+            self.statusBar().showMessage(
+                "Preview not updated; last valid image retained because render returned no result.",
+                8000,
+            )
             return
         self.viewport.set_result(outcome.result)
         self._latest_render_result = outcome.result
@@ -1854,7 +2013,38 @@ class MainWindow(QMainWindow):
         return impacts
 
     def _property_changed(self, parameter_id: str, value) -> None:
+        if self._uses_context_edit_transaction():
+            self._stage_context_layer_edit(
+                lambda recipe, _layer: self._apply_property_value(recipe, parameter_id, value)
+            )
+            return
         recipe = self.document.recipe
+        self._apply_property_value(recipe, parameter_id, value)
+        layer = self._layer(recipe)
+        instance = next(
+            (
+                item
+                for item in [layer.source, *layer.transforms]
+                if item is not None and item.instance_id == self._selected_instance_id
+            ),
+            None,
+        )
+        if instance is None:
+            return
+        refresh_properties = parameter_id == "influence" and isinstance(
+            instance.influence, ControlFieldBinding
+        )
+        if parameter_id != "influence":
+            refresh_properties = isinstance(
+                instance.parameters.get(parameter_id), ControlFieldBinding
+            )
+        self._commit_recipe(
+            recipe,
+            instance.instance_id,
+            refresh_properties=refresh_properties,
+        )
+
+    def _apply_property_value(self, recipe: ProjectRecipe, parameter_id: str, value) -> None:
         layer = self._layer(recipe)
         instance = next(
             (
@@ -1867,15 +2057,10 @@ class MainWindow(QMainWindow):
         if instance is None:
             return
         if parameter_id == "influence":
-            refresh_properties = isinstance(instance.influence, ControlFieldBinding)
             instance.influence = value
         else:
-            refresh_properties = isinstance(
-                instance.parameters.get(parameter_id), ControlFieldBinding
-            )
             instance.parameters[parameter_id] = value
             if instance.operation_id == "generator.output_scalar" and parameter_id == "mode":
-                refresh_properties = True
                 target_id = instance.parameters.get("target")
                 target = next(
                     (item for item in recipe.outputs if item.output_id == target_id), None
@@ -1894,16 +2079,93 @@ class MainWindow(QMainWindow):
                     )
                     if compatible is not None:
                         instance.parameters["target"] = compatible.output_id
-        self._commit_recipe(
-            recipe,
-            instance.instance_id,
-            refresh_properties=refresh_properties,
+
+    def _uses_context_edit_transaction(self) -> bool:
+        return (
+            self.authoring_mode_combo.currentIndex() == 0
+            and self.simple_inspector_pages.currentIndex() == 1
         )
+
+    def _stage_context_layer_edit(self, edit) -> None:
+        recipe = copy.deepcopy(self._edit_draft_recipe or self.document.recipe)
+        layer = next(
+            (item for item in self._layers_for(recipe) if item.layer_id == self._selected_layer_id),
+            None,
+        )
+        if layer is None:
+            return
+        try:
+            edit(recipe, layer)
+            ensure_valid_recipe(recipe)
+        except (ValidationError, ValueError, TypeError) as exc:
+            self.statusBar().showMessage(f"Edit preview rejected: {exc}", 6000)
+            self.layer_edit_status.setText(f"Preview could not be updated: {exc}")
+            return
+        self._edit_draft_recipe = recipe
+        self.apply_layer_edit_button.setEnabled(True)
+        self.cancel_layer_edit_button.setEnabled(True)
+        self.layer_edit_status.setText("Previewing changes · Apply to add one undo step.")
+        self._request_render(recipe)
+        self._request_preview(recipe=recipe)
+
+    def _context_layer_opacity_changed(self, opacity: float) -> None:
+        if self._uses_context_edit_transaction():
+            self._stage_context_layer_edit(
+                lambda _recipe, layer: setattr(layer, "opacity", opacity)
+            )
+
+    def _context_layer_blend_changed(self, _index: int) -> None:
+        if not self._uses_context_edit_transaction():
+            return
+        blend = str(self.context_blend.currentData())
+        self._stage_context_layer_edit(lambda _recipe, layer: setattr(layer, "blend_mode", blend))
+
+    def _choose_context_solid_color(self) -> None:
+        layer = self._layer()
+        initial = QColor(56, 158, 194)
+        if layer.color_ramp is not None and layer.color_ramp.stops:
+            initial = QColor.fromRgbF(*layer.color_ramp.stops[0].color)
+        chosen = QColorDialog.getColor(
+            initial, self, "Solid Layer Color", QColorDialog.ColorDialogOption.ShowAlphaChannel
+        )
+        if not chosen.isValid():
+            return
+        color = tuple(chosen.getRgbF())
+
+        def set_color(_recipe, edited_layer):
+            edited_layer.color_ramp = ColorRamp((ColorStop(0.0, color), ColorStop(1.0, color)))
+
+        self._stage_context_layer_edit(set_color)
+
+    def _apply_layer_edit(self) -> None:
+        if self._edit_draft_recipe is None:
+            return
+        recipe = self._edit_draft_recipe
+        self._edit_draft_recipe = None
+        self.document.history.end_group()
+        self.apply_layer_edit_button.setEnabled(False)
+        self.cancel_layer_edit_button.setEnabled(False)
+        self._commit_recipe(recipe, self._selected_instance_id)
+        self.layer_edit_status.setText("Applied · one undo step added.")
+
+    def _cancel_layer_edit(self) -> None:
+        if self._edit_draft_recipe is None:
+            self.apply_layer_edit_button.setEnabled(False)
+            self.cancel_layer_edit_button.setEnabled(False)
+            return
+        self._edit_draft_recipe = None
+        self.document.history.end_group()
+        self.apply_layer_edit_button.setEnabled(False)
+        self.cancel_layer_edit_button.setEnabled(False)
+        self.layer_edit_status.setText("Canceled · original material restored.")
+        self._refresh_document(request_render=True, refresh_properties=True)
 
     def _select_layer(self, layer_id: str) -> None:
         recipe = self.document.recipe
         if not any(layer.layer_id == layer_id for layer in self._layers_for(recipe)):
             return
+        if layer_id != self._selected_layer_id:
+            self._cancel_layer_edit()
         self._selected_layer_id = layer_id
         layer = self._layer()
         self._selected_instance_id = layer.source.instance_id

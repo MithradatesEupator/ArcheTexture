@@ -64,6 +64,13 @@ def wait_for_render(qtbot, window) -> None:
     )
 
 
+def apply_context_edit(qtbot, window) -> None:
+    if window._edit_draft_recipe is None:
+        return
+    window.apply_layer_edit_button.click()
+    wait_for_render(qtbot, window)
+
+
 def render_preview(editor: ColorRampEditor) -> QImage:
     image = QImage(editor.preview.size(), QImage.Format.Format_ARGB32)
     image.fill(QColor("transparent"))
@@ -142,6 +149,7 @@ def test_add_stop_uses_largest_gap_and_interpolated_color(workbench, qtbot):
 
     editor.add_button.click()
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
     stops = workbench.document.recipe.color_ramp.stops
     inserted = next(stop for stop in stops if stop.position == expected_position)
     assert inserted.color == pytest.approx(expected_color)
@@ -151,12 +159,13 @@ def test_add_stop_uses_largest_gap_and_interpolated_color(workbench, qtbot):
     assert workbench.render_coordinator.latest_request_id > initial_request_id
 
 
-def test_remove_stop_keeps_a_valid_ramp_and_disables_last_removal(workbench):
+def test_remove_stop_keeps_a_valid_ramp_and_disables_last_removal(workbench, qtbot):
     editor = workbench.color_ramp_editor
     editor.remove_stop()
-    assert len(workbench.document.recipe.color_ramp.stops) == 2
+    assert len(workbench._layer(workbench._edit_draft_recipe).color_ramp.stops) == 2
     editor.remove_stop()
-    assert len(workbench.document.recipe.color_ramp.stops) == 1
+    assert len(workbench._layer(workbench._edit_draft_recipe).color_ramp.stops) == 1
+    apply_context_edit(qtbot, workbench)
     assert not editor.remove_stop_button.isEnabled()
     editor.remove_stop_button.click()
     assert len(workbench.document.recipe.color_ramp.stops) == 1
@@ -167,6 +176,7 @@ def test_numeric_position_edit_is_unique_updates_recipe_and_render(workbench, qt
     original_pixels = workbench.viewport.rendered_field.copy()
     editor.position_spin.setValue(0.25)
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
     ramp = workbench.document.recipe.color_ramp
     assert ramp.stops[0].position == pytest.approx(0.25)
     assert np.array_equal(workbench.viewport.rendered_field[0, 0], ramp.sample(0.2))
@@ -174,6 +184,7 @@ def test_numeric_position_edit_is_unique_updates_recipe_and_render(workbench, qt
 
     click_stop(qtbot, editor, 0.5)
     editor.position_spin.setValue(0.25)
+    apply_context_edit(qtbot, workbench)
     ramp = workbench.document.recipe.color_ramp
     positions = [stop.position for stop in ramp.stops]
     assert len(set(positions)) == len(positions)
@@ -196,6 +207,7 @@ def test_drag_moves_stop_with_one_history_edit_and_undo_redo(workbench, qtbot):
     QTest.mouseMove(preview, finish, delay=10)
     QTest.mouseRelease(preview, Qt.MouseButton.LeftButton, pos=finish)
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
 
     moved = workbench.document.recipe.color_ramp
     assert any(stop.position == pytest.approx(0.75, abs=0.02) for stop in moved.stops)
@@ -225,6 +237,7 @@ def test_color_and_alpha_edits_render_and_survive_save_reopen(
     initial_pixels = workbench.viewport.rendered_field.copy()
     editor.color_button.click()
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
 
     ramp = workbench.document.recipe.color_ramp
     assert options_seen and options_seen[0] & QColorDialog.ColorDialogOption.ShowAlphaChannel
@@ -241,6 +254,7 @@ def test_color_and_alpha_edits_render_and_survive_save_reopen(
     saved_pixels = workbench.viewport.rendered_field.copy()
     editor.position_spin.setValue(0.1)
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
     assert workbench.open_project(str(path))
     wait_for_render(qtbot, workbench)
     assert workbench.document.recipe.color_ramp == saved_ramp
@@ -257,6 +271,7 @@ def test_create_remove_ramp_grayscale_undo_and_redo(workbench, qtbot):
 
     editor.create_button.click()
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
     created = workbench.document.recipe.color_ramp
     assert created == ColorRamp(
         (ColorStop(0.0, (0.0, 0.0, 0.0, 1.0)), ColorStop(1.0, (1.0, 1.0, 1.0, 1.0)))
@@ -265,6 +280,7 @@ def test_create_remove_ramp_grayscale_undo_and_redo(workbench, qtbot):
 
     editor.remove_ramp_button.click()
     wait_for_render(qtbot, workbench)
+    apply_context_edit(qtbot, workbench)
     assert workbench.document.recipe.color_ramp is None
     grayscale = workbench.viewport.rendered_field
     assert np.allclose(grayscale[..., :3], 0.2)
