@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGridLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -81,6 +83,7 @@ class SimpleMaterialPanel(QWidget):
     controlParameterChanged = Signal(str, str, str, object)
     controlEditStarted = Signal()
     controlEditFinished = Signal()
+    operationAdded = Signal(str)
 
     CHANNELS = (
         ("base_color", "Color"),
@@ -115,6 +118,25 @@ class SimpleMaterialPanel(QWidget):
                 lambda _checked=False, key=semantic: self.channelSelected.emit(key)
             )
         channel_layout.addLayout(grid)
+        self.add_operation_button = QToolButton(self.channel_widget)
+        self.add_operation_button.setObjectName("simple-add-operation")
+        self.add_operation_button.setText("Add operation")
+        self.add_operation_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self.add_operation_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.add_operation_menu = QMenu(self.add_operation_button)
+        for label, key in (
+            ("Gradient", "gradient"),
+            ("Solid Color", "solid_color"),
+            ("Noise / Pattern", "pattern"),
+            ("Image", "image"),
+        ):
+            action = self.add_operation_menu.addAction(label)
+            action.setData(key)
+            action.triggered.connect(
+                lambda _checked=False, operation=key: self.operationAdded.emit(operation)
+            )
+        self.add_operation_button.setMenu(self.add_operation_menu)
+        channel_layout.addWidget(self.add_operation_button)
         self.source_selector = QComboBox(self.channel_widget)
         self.source_selector.setObjectName("simple-source-selector")
         common_source_ids = {
@@ -146,13 +168,14 @@ class SimpleMaterialPanel(QWidget):
         )
         channel_layout.addWidget(QLabel("Source"))
         channel_layout.addWidget(self.source_selector)
+        self.source_label = channel_layout.itemAt(channel_layout.count() - 1).widget()
 
         self.controls_widget = QWidget(self)
         controls_layout = QVBoxLayout(self.controls_widget)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         self.guidance = QLabel(
-            "Choose a material property. Select its layers on the left and edit their "
-            "parameters above. Changes update the sphere automatically."
+            "Choose a material property, add a layer, and edit the selected layer. "
+            "The canvas and material preview update as you work."
         )
         self.guidance.setWordWrap(True)
         self.guidance.setObjectName("simple-material-guidance")
@@ -174,6 +197,19 @@ class SimpleMaterialPanel(QWidget):
         layout.addWidget(self.channel_widget)
         layout.addWidget(self.controls_widget)
         self.setMinimumWidth(270)
+        self.set_simple_mode(True)
+
+    def set_simple_mode(self, simple: bool) -> None:
+        self.add_operation_button.setVisible(simple)
+        self.source_selector.setVisible(not simple)
+        self.source_label.setVisible(not simple)
+        self.tileability.setVisible(not simple)
+        if self.controls_widget.layout() is not None:
+            for index in range(self.controls_widget.layout().count()):
+                item = self.controls_widget.layout().itemAt(index)
+                widget = item.widget() if item else None
+                if isinstance(widget, QLabel) and widget.text() == "STARTER CONTROLS":
+                    widget.setVisible(not simple)
 
     def set_recipe(
         self,

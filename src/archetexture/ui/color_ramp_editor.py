@@ -526,7 +526,8 @@ class ColorRampEditor(QWidget):
             initial,
             self,
             "Choose stop color",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel,
+            QColorDialog.ColorDialogOption.ShowAlphaChannel
+            | QColorDialog.ColorDialogOption.DontUseNativeDialog,
         )
         if not color.isValid():
             return

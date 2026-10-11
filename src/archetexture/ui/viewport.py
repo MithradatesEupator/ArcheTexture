@@ -26,6 +26,7 @@ class TextureViewport(QWidget):
         self._presentation_pixmap = QPixmap()
         self._display_mode = "single"
         self._message = "Render a recipe to see its texture."
+        self._warning = ""
         self._rgba: np.ndarray | None = None
         self._mask_pixmap = QPixmap()
 
@@ -63,7 +64,18 @@ class TextureViewport(QWidget):
         self._pixmap = self._pixmap_from_rgba(rgba)
         self._rgba = rgba.copy()
         self._message = ""
+        self._warning = ""
         self._update_presentation_pixmap()
+        self.update()
+
+    def clear(self) -> None:
+        """Remove the previous document's image before rendering a replacement."""
+        self._pixmap = QPixmap()
+        self._presentation_pixmap = QPixmap()
+        self._mask_pixmap = QPixmap()
+        self._rgba = None
+        self._warning = ""
+        self._message = "Render a recipe to see its texture."
         self.update()
 
     @staticmethod
@@ -90,11 +102,15 @@ class TextureViewport(QWidget):
         self._presentation_pixmap = self._pixmap_from_rgba(shifted)
 
     def set_error(self, message: str) -> None:
-        self._pixmap = QPixmap()
-        self._presentation_pixmap = QPixmap()
-        self._rgba = None
-        self._mask_pixmap = QPixmap()
-        self._message = message
+        self._warning = f"Preview not updated: {message}"
+        if self._pixmap.isNull():
+            self._message = self._warning
+        self.update()
+
+    def set_pending(self) -> None:
+        self._warning = "Rendering preview…"
+        if self._pixmap.isNull():
+            self._message = self._warning
         self.update()
 
     def paintEvent(self, _event) -> None:
@@ -119,20 +135,30 @@ class TextureViewport(QWidget):
             bounds = self.rect().adjusted(12, 12, -12, -12)
             for target in self.tile_preview_rects(bounds, self._pixmap.size()):
                 painter.drawPixmap(target, self._pixmap)
-            return
-        available = self.size() - QSize(24, 24)
-        fitted = self._presentation_pixmap.scaled(
-            available,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        target = QRect(
-            (self.width() - fitted.width()) // 2,
-            (self.height() - fitted.height()) // 2,
-            fitted.width(),
-            fitted.height(),
-        )
-        painter.drawPixmap(target, fitted)
+        else:
+            available = self.size() - QSize(24, 24)
+            fitted = self._presentation_pixmap.scaled(
+                available,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            target = QRect(
+                (self.width() - fitted.width()) // 2,
+                (self.height() - fitted.height()) // 2,
+                fitted.width(),
+                fitted.height(),
+            )
+            painter.drawPixmap(target, fitted)
+        if self._warning:
+            banner = self.rect().adjusted(8, 8, -8, -8)
+            banner.setHeight(30)
+            painter.fillRect(banner, self.palette().color(self.palette().ColorRole.ToolTipBase))
+            painter.setPen(self.palette().color(self.palette().ColorRole.ToolTipText))
+            painter.drawText(
+                banner.adjusted(8, 0, -8, 0),
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                self._warning,
+            )
 
     @staticmethod
     def tile_preview_rects(available: QRect, image_size: QSize) -> tuple[QRect, ...]:

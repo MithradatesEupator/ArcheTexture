@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from archetexture.core.parameters import ControlFieldBinding
 from archetexture.core.recipe import ProjectRecipe
 
 
@@ -145,7 +147,14 @@ class LayersPanel(QWidget):
 
     def set_simple_mode(self, simple: bool) -> None:
         self._simple_mode = simple
+        self.pipeline_descriptor.setVisible(not simple)
+        self.add_button.setVisible(not simple)
+        self.duplicate_button.setVisible(not simple)
+        self.remove_button.setVisible(not simple)
+        self.up_button.setVisible(not simple)
+        self.down_button.setVisible(not simple)
         self.more_layer_actions.setVisible(not simple)
+        self.opacity.setVisible(True)
         self.blend.setVisible(not simple)
         self.mask_combo.setVisible(not simple)
         self.mask_title.setVisible(not simple)
@@ -172,12 +181,19 @@ class LayersPanel(QWidget):
         for layer in layers:
             item = QListWidgetItem(layer.name)
             item.setData(Qt.ItemDataRole.UserRole, layer.layer_id)
+            item.setIcon(self._layer_thumbnail(layer))
             item.setFlags(
                 item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsUserCheckable
             )
             item.setCheckState(Qt.CheckState.Checked if layer.enabled else Qt.CheckState.Unchecked)
             self._known[layer.layer_id] = (layer.name, layer.enabled)
             self.layer_list.addItem(item)
+            if not layer.enabled:
+                item.setForeground(
+                    self.palette().color(
+                        self.palette().ColorGroup.Disabled, self.palette().ColorRole.Text
+                    )
+                )
             if layer.layer_id == selected_id:
                 selected = item
         if selected:
@@ -214,6 +230,37 @@ class LayersPanel(QWidget):
         self.copy_output_button.setEnabled(row >= 0)
         self.move_output_button.setEnabled(row >= 0)
         self.create_output_button.setEnabled(row >= 0)
+
+    @staticmethod
+    def _layer_thumbnail(layer) -> QIcon:
+        pixmap = QPixmap(48, 32)
+        pixmap.fill(QColor("#24272d"))
+        gradient = QLinearGradient(0, 0, 48, 32)
+        if layer.color_ramp is not None and layer.color_ramp.stops:
+            stops = sorted(layer.color_ramp.stops, key=lambda stop: stop.position)
+            for stop in stops:
+                gradient.setColorAt(
+                    min(1.0, max(0.0, float(stop.position))),
+                    QColor.fromRgbF(*stop.color),
+                )
+        elif layer.source.operation_id == "generator.image":
+            gradient.setColorAt(0.0, QColor("#286f83"))
+            gradient.setColorAt(1.0, QColor("#df9855"))
+        else:
+            value = layer.source.parameters.get("value", 0.5)
+            if isinstance(value, ControlFieldBinding):
+                value = 0.5
+            value = float(value)
+            shade = int(min(1.0, max(0.0, value)) * 255)
+            gradient.setColorAt(0.0, QColor(max(0, shade - 55), max(0, shade - 35), shade))
+            gradient.setColorAt(1.0, QColor(shade, shade, shade))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(gradient)
+        painter.setPen(QColor("#59616c"))
+        painter.drawRoundedRect(0, 0, 47, 31, 4, 4)
+        painter.end()
+        return QIcon(pixmap)
 
     def set_pipeline_descriptor(self, descriptor: str) -> None:
         self.pipeline_descriptor.setText(descriptor)

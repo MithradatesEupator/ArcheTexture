@@ -140,6 +140,11 @@ def theme_stylesheet(mode: str) -> str:
             background: {button}; color: {text}; border: 1px solid {border};
             padding: 4px 8px;
         }}
+        QToolButton#simple-add-operation {{
+            min-height: 34px; border: 1px solid {highlight}; font-weight: 600;
+            text-align: left; padding-left: 12px;
+        }}
+        QWidget#simple-layer-inspector {{ background: {window}; }}
         QPushButton:hover, QToolButton:hover {{ background: {hover}; }}
         QPushButton:pressed, QToolButton:pressed {{ background: {pressed}; }}
         QPushButton:disabled, QToolButton:disabled {{

@@ -3,12 +3,15 @@ from __future__ import annotations
 import copy
 
 import pytest
-from PySide6.QtCore import QPoint, QPointF, QSettings, Qt
+from PySide6.QtCore import QPoint, QPointF, QSettings, Qt, QTimer
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QDoubleSpinBox
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QDoubleSpinBox
 
+from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.defaults import default_recipe
 from archetexture.core.material_starters import MATERIAL_STARTERS, create_material_starter
+from archetexture.ui.gradient_editor import GradientEditorDialog
 from archetexture.ui.main_window import MainWindow
 
 
@@ -18,14 +21,12 @@ def test_starter_opens_with_usable_simple_channels(starter, qtbot):
     qtbot.addWidget(window)
 
     assert window.authoring_mode_combo.currentText() == "Simple Editor"
-    assert window.right_tabs.tabText(0) == "View Settings"
+    assert window.right_tabs.tabText(0) == "Layer Editor"
+    assert not window.simple_material_panel.add_operation_button.isHidden()
     assert window.preview_controls.mesh.currentText() == "UV Sphere"
     assert window.preview_controls.quality.currentText() == "High"
     assert window.preview_controls.mode.currentText() == "Material"
-    assert (
-        window.simple_material_panel.source_selector.currentData()
-        == window._layer().source.operation_id
-    )
+    assert window.simple_material_panel.source_selector.isHidden()
     assert window.simple_material_panel.channel_buttons["base_color"].isEnabled()
     assert window.simple_material_panel.channel_buttons["normal"].isEnabled()
     assert window.simple_material_panel.channel_buttons["roughness"].isEnabled()
@@ -143,13 +144,85 @@ def test_simple_source_selector_edits_the_selected_layer_source(qtbot):
     window = MainWindow(create_material_starter("Wood Grain"))
     qtbot.addWidget(window)
     window._confirm_discard = lambda: True
-    selector = window.simple_material_panel.source_selector
+    window.authoring_mode_combo.setCurrentIndex(1)
+    selector = window.pipeline_panel.source_selector
     index = selector.findData("generator.seamless_cellular")
     assert index >= 0
     selector.setCurrentIndex(index)
     assert window._layer().source.operation_id == "generator.seamless_cellular"
     assert selector.currentData() == window._layer().source.operation_id
-    assert window.authoring_mode_combo.currentIndex() == 0
+    assert window.authoring_mode_combo.currentIndex() == 1
+    window.close()
+
+
+def test_gradient_add_applies_one_coherent_recipe_edit_and_cancel_discards(qtbot, tmp_path):
+    window = MainWindow(default_recipe())
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    window.resize(1400, 900)
+    window.show()
+    original = copy.deepcopy(window.document.recipe)
+    history_index = window.document.history.index
+    selection = (window._selected_output_id, window._selected_layer_id)
+
+    def cancel_dialog():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, GradientEditorDialog)
+        assert dialog.angle.isVisible()
+        QTest.mouseClick(
+            dialog.buttons.button(QDialogButtonBox.StandardButton.Cancel),
+            Qt.MouseButton.LeftButton,
+        )
+
+    QTimer.singleShot(0, cancel_dialog)
+    window._simple_operation_added("gradient")
+    assert window.document.recipe == original
+    assert window.document.history.index == history_index
+    assert (window._selected_output_id, window._selected_layer_id) == selection
+
+    def apply_dialog():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, GradientEditorDialog)
+        dialog.kind.setCurrentIndex(dialog.kind.findData("generator.radial_gradient"))
+        assert dialog.radius.isVisible()
+        dialog.radius.setValue(0.72)
+        dialog.opacity.setValue(0.65)
+        ramp = ColorRamp(
+            (
+                ColorStop(0.0, (0.06, 0.12, 0.24, 1.0)),
+                ColorStop(0.5, (0.88, 0.2, 0.12, 1.0)),
+                ColorStop(1.0, (0.98, 0.8, 0.28, 1.0)),
+            )
+        )
+        dialog.ramp_editor.set_ramp(ramp)
+        dialog._ramp_changed(ramp)
+        QTest.mouseClick(
+            dialog.buttons.button(QDialogButtonBox.StandardButton.Apply),
+            Qt.MouseButton.LeftButton,
+        )
+
+    before_apply = window.document.history.index
+    QTimer.singleShot(0, apply_dialog)
+    window._simple_operation_added("gradient")
+    result = window.document.recipe
+    added = result.output("base-color").layers[-1]
+    assert added.name == "Gradient"
+    assert added.source.operation_id == "generator.radial_gradient"
+    assert added.source.parameters["radius"] == pytest.approx(0.72)
+    assert added.opacity == pytest.approx(0.65)
+    assert len(added.color_ramp.stops) == 3
+    assert window.document.history.index == before_apply + 1
+    assert window.document.can_undo
+    window.undo_action.trigger()
+    assert window.document.recipe == original
+    window.redo_action.trigger()
+    assert window.document.recipe == result
+
+    project = tmp_path / "gradient.archetexture"
+    window.document.save(project)
+    from archetexture.core.serialization import load_project
+
+    assert load_project(project) == result
     window.close()
 
 

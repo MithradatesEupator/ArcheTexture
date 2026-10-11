@@ -472,6 +472,9 @@ def validate_recipe(
                         )
                 if isinstance(instance, OperationInstance) and instance.enabled:
                     previous_type = current_type
+            all_instances.extend(
+                item for item in [layer.source, *layer_transforms] if item is not None
+            )
             ramp = layer.color_ramp
             if ramp is not None:
                 ramp_path = f"{path}.color_ramp"
@@ -517,22 +520,21 @@ def validate_recipe(
                     issues.append(
                         ValidationIssue(ramp_path, "color ramps require scalar source output")
                     )
-                all_instances.extend([layer.source, *layer_transforms])
-                final_type = previous_type
-                if output.value_type == "scalar" and (
-                    final_type != "scalar" or layer.color_ramp is not None
-                ):
-                    issues.append(
-                        ValidationIssue(
-                            path, "scalar outputs require scalar layers without color ramps"
-                        )
+            final_type = previous_type
+            if output.value_type == "scalar" and (
+                final_type != "scalar" or layer.color_ramp is not None
+            ):
+                issues.append(
+                    ValidationIssue(
+                        path, "scalar outputs require scalar layers without color ramps"
                     )
-                elif output.value_type == "normal" and final_type != "rgba":
-                    issues.append(
-                        ValidationIssue(
-                            path, "normal outputs require RGBA layer output; use Height to Normal"
-                        )
+                )
+            elif output.value_type == "normal" and final_type != "rgba":
+                issues.append(
+                    ValidationIssue(
+                        path, "normal outputs require RGBA layer output; use Height to Normal"
                     )
+                )
 
     graph: dict[str, set[str]] = {}
     instance_ids: set[str] = set()

@@ -203,12 +203,80 @@ def test_type_changing_pipeline_validation_ramp_and_render(tmp_path):
     np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(actual[..., 3], 255)
     assert (recipe.width, recipe.height) == (21, 13)
-
     project_path = tmp_path / "normal.archetexture"
     save_project(recipe, project_path)
     reopened = load_project(project_path)
     assert reopened.layers[0].transforms[0] == operation
     np.testing.assert_array_equal(RenderEngine().render(reopened).rgba_field, rendered)
+
+
+def test_normal_output_without_ramp_rejects_disabled_height_conversion_and_scalar_source():
+    from archetexture.core.defaults import default_recipe
+
+    recipe = default_recipe()
+    normal_output = recipe.output("normal")
+    layer = normal_output.layers[0]
+    assert layer.color_ramp is None
+    layer.transforms[0].enabled = False
+    with pytest.raises(ValidationError, match="normal outputs require RGBA layer output"):
+        ensure_valid_recipe(recipe)
+
+    recipe = default_recipe()
+    normal_output = recipe.output("normal")
+    layer = normal_output.layers[0]
+    layer.source = instance("source-normal", "generator.constant", {"value": 0.5})
+    layer.transforms.clear()
+    with pytest.raises(ValidationError, match="normal outputs require RGBA layer output"):
+        ensure_valid_recipe(recipe)
+
+
+def test_viewport_keeps_last_good_image_and_marks_failed_update(qtbot):
+    from archetexture.ui.viewport import TextureViewport
+
+    recipe = normal_recipe(19, 13)
+    result = RenderEngine().render(recipe)
+    viewport = TextureViewport()
+    qtbot.addWidget(viewport)
+    viewport.set_result(result)
+    previous = viewport.rendered_field.copy()
+
+    viewport.set_error("Normal output requires RGBA layers; use Height to Normal")
+
+    np.testing.assert_array_equal(viewport.rendered_field, previous)
+    assert "Preview not updated" in viewport._warning
+    assert "Height to Normal" in viewport._warning
+
+
+def test_main_window_rejects_and_restores_incompatible_normal_layer_edits(qtbot):
+    from archetexture.core.defaults import default_recipe
+    from archetexture.ui.main_window import MainWindow
+
+    window = MainWindow(default_recipe())
+    qtbot.addWidget(window)
+    window._confirm_discard = lambda: True
+    window._selected_output_id = "normal"
+    layer = window._layer()
+    window._selected_layer_id = layer.layer_id
+    conversion = layer.transforms[0]
+    window._selected_instance_id = conversion.instance_id
+    window._refresh_document(request_render=False)
+    before = window.document.recipe
+    history_index = window.document.history.index
+
+    window._transform_enabled(conversion.instance_id, False)
+
+    assert window.document.recipe == before
+    assert window.document.history.index == history_index
+    assert window._layer().transforms[0].enabled
+    assert "Edit rejected" in window.statusBar().currentMessage()
+
+    window._source_changed("generator.output_color")
+
+    assert window.document.recipe == before
+    assert window.document.history.index == history_index
+    assert window._layer().source.operation_id == "generator.output_scalar"
+    assert "Edit rejected" in window.statusBar().currentMessage()
+    window.close()
 
 
 def test_wrap_seamlessness_and_clamp_is_conservative():
