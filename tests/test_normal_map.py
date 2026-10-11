@@ -410,8 +410,8 @@ def test_pipeline_ui_append_reorder_output_description_undo_redo_and_dark(qtbot,
     assert panel.transform_selector.isEnabled()
     assert panel.add_button.isEnabled()
     assert "Height to Normal → RGBA" in panel.output_description.text()
-    assert window.color_ramp_editor.inapplicable_label.isVisible()
-    assert not window.color_ramp_editor.create_button.isVisible()
+    assert not window.color_ramp_editor.inapplicable_label.isHidden()
+    assert window.color_ramp_editor.create_button.isHidden()
 
     normal_row = panel.transform_list.count() - 1
     panel.transform_list.setCurrentRow(normal_row)

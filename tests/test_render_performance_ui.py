@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDoubleSpinBox, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from archetexture.color.ramp import ColorRamp, ColorStop
 from archetexture.core.assets import AssetReference, RenderContext
@@ -22,6 +22,7 @@ from archetexture.export.image_export import ImageExporter
 from archetexture.render.coordinator import RenderOutcome
 from archetexture.render.engine import RenderEngine
 from archetexture.ui.main_window import build_main_window
+from archetexture.ui.numeric_control import NumericControl
 
 
 def _operation(operation_id: str, identifier: str, **overrides) -> OperationInstance:
@@ -101,7 +102,7 @@ def test_real_gui_edits_converge_and_document_switches_clear_previous_view(
     executions = session.stats["operation_executions"]
 
     window._select_layer("procedural")
-    scale = window.property_editor.findChild(QDoubleSpinBox, "parameter-scale")
+    scale = window.property_editor.findChild(NumericControl, "parameter-scale")
     assert scale is not None
     scale.setValue(scale.value() + 0.4)
     settled()
